@@ -10,10 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
@@ -21,10 +19,11 @@ import (
 )
 
 const (
-	metadataHTTPMethod = "HttpMethod"
-	metadataHTTPHost   = "HttpHost"
-	metadataHTTPHeader = "HttpHeader"
-	metadataHTTPStatus = "HttpStatus"
+	metadataHTTPMethod       = "HttpMethod"
+	metadataHTTPHost         = "HttpHost"
+	metadataHTTPHeader       = "HttpHeader"
+	metadataHTTPHeaderPrefix = metadataHTTPHeader + ":"
+	metadataHTTPStatus       = "HttpStatus"
 )
 
 var (
@@ -63,7 +62,7 @@ func (s *Service) HandleRPCStream(ctx context.Context, stream io.ReadWriteCloser
 
 func (s *Service) HandleRPCStreamWithSender(ctx context.Context, stream io.ReadWriteCloser, connIndex uint8, sender DatagramSender) {
 	switch datagramVersionForSender(sender) {
-	case "v3":
+	case datagramVersionV3:
 		ServeV3RPCStream(ctx, stream, s, s.logger)
 	default:
 		muxer := s.getOrCreateV2Muxer(sender)
@@ -73,7 +72,7 @@ func (s *Service) HandleRPCStreamWithSender(ctx context.Context, stream io.ReadW
 
 func (s *Service) HandleDatagram(ctx context.Context, datagram []byte, sender DatagramSender) {
 	switch datagramVersionForSender(sender) {
-	case "v3":
+	case datagramVersionV3:
 		muxer := s.getOrCreateV3Muxer(sender)
 		muxer.HandleDatagram(ctx, datagram)
 	default:
@@ -324,7 +323,10 @@ func (s *Service) roundTripHTTP(ctx context.Context, stream io.ReadWriteCloser, 
 			s.logger.ErrorContext(ctx, "websocket origin response body is not duplex")
 			return
 		}
-		bidirectionalCopy(stream, rwc)
+		err = bufio.CopyConn(ctx, newStreamConn(stream), newStreamConn(rwc))
+		if err != nil && !E.IsClosedOrCanceled(err) {
+			s.logger.DebugContext(ctx, "copy websocket stream: ", err)
+		}
 		return
 	}
 
@@ -346,7 +348,10 @@ func (s *Service) newRouterOriginTransport(ctx context.Context, destination M.So
 	if err != nil {
 		return nil, nil, err
 	}
-	input, cleanup, _ := s.dialRouterTCPWithMetadata(ctx, destination, routedPipeTCPOptions{})
+	input, cleanup, err := s.dialRouterTCPWithMetadata(ctx, destination, routedPipeTCPOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
 
 	transport := &http.Transport{
 		ExpectContinueTimeout: time.Second,
@@ -463,6 +468,7 @@ func newOriginTLSConfig(originRequest OriginRequestConfig, requestHost string) (
 	if err != nil {
 		return nil, E.Cause(err, "read origin ca pool")
 	}
+	tlsConfig.RootCAs = tlsConfig.RootCAs.Clone()
 	if !tlsConfig.RootCAs.AppendCertsFromPEM(pemData) {
 		return nil, E.New("parse origin ca pool")
 	}
@@ -521,34 +527,7 @@ func normalizeOriginRequest(connectType ConnectionType, request *http.Request, o
 }
 
 func buildMetadataOnlyHTTPRequest(ctx context.Context, connectRequest *ConnectRequest) (*http.Request, error) {
-	return buildHTTPRequestFromMetadata(ctx, &ConnectRequest{
-		Dest:     connectRequest.Dest,
-		Type:     connectRequest.Type,
-		Metadata: append([]Metadata(nil), connectRequest.Metadata...),
-	}, http.NoBody)
-}
-
-func bidirectionalCopy(left, right io.ReadWriteCloser) {
-	var closeOnce sync.Once
-	closeBoth := func() {
-		closeOnce.Do(func() {
-			common.Close(left, right)
-		})
-	}
-
-	done := make(chan struct{}, 2)
-	go func() {
-		io.Copy(left, right)
-		closeBoth()
-		done <- struct{}{}
-	}()
-	go func() {
-		io.Copy(right, left)
-		closeBoth()
-		done <- struct{}{}
-	}()
-	<-done
-	<-done
+	return buildHTTPRequestFromMetadata(ctx, connectRequest, http.NoBody)
 }
 
 func buildHTTPRequestFromMetadata(ctx context.Context, connectRequest *ConnectRequest, body io.Reader) (*http.Request, error) {
@@ -563,10 +542,10 @@ func buildHTTPRequestFromMetadata(ctx context.Context, connectRequest *ConnectRe
 	request.Host = host
 
 	for _, entry := range connectRequest.Metadata {
-		if !strings.HasPrefix(entry.Key, metadataHTTPHeader+":") {
+		if !strings.HasPrefix(entry.Key, metadataHTTPHeaderPrefix) {
 			continue
 		}
-		headerName := strings.TrimPrefix(entry.Key, metadataHTTPHeader+":")
+		headerName := strings.TrimPrefix(entry.Key, metadataHTTPHeaderPrefix)
 		request.Header.Add(headerName, entry.Val)
 	}
 
@@ -605,7 +584,7 @@ func encodeResponseHeaders(statusCode int, header http.Header) []Metadata {
 	for name, values := range header {
 		for _, value := range values {
 			metadata = append(metadata, Metadata{
-				Key: metadataHTTPHeader + ":" + name,
+				Key: metadataHTTPHeaderPrefix + name,
 				Val: value,
 			})
 		}

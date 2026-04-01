@@ -34,7 +34,6 @@ func SerializeHeaders(header http.Header) string {
 	return builder.String()
 }
 
-// isControlResponseHeader returns true for headers that are internal control headers.
 func isControlResponseHeader(name string) bool {
 	return strings.HasPrefix(name, ":") ||
 		strings.HasPrefix(name, "cf-int-") ||
@@ -42,7 +41,6 @@ func isControlResponseHeader(name string) bool {
 		strings.HasPrefix(name, "cf-proxy-")
 }
 
-// isWebsocketClientHeader returns true for headers needed by the client for WebSocket upgrade.
 func isWebsocketClientHeader(name string) bool {
 	return name == "sec-websocket-accept" ||
 		name == "connection" ||

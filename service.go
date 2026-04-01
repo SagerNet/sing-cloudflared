@@ -119,7 +119,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}
 
 	datagramVersion := options.DatagramVersion
-	if datagramVersion != "" && datagramVersion != "v2" && datagramVersion != "v3" {
+	if datagramVersion != "" && datagramVersion != defaultDatagramVersion && datagramVersion != datagramVersionV3 {
 		return nil, E.New("unsupported datagram_version: ", datagramVersion, ", expected v2 or v3")
 	}
 
@@ -239,9 +239,6 @@ func (s *Service) Start() error {
 
 func (s *Service) notifyConnected(connIndex uint8, protocol string) {
 	s.stateAccess.Lock()
-	if s.successfulProtocols == nil {
-		s.successfulProtocols = make(map[string]struct{})
-	}
 	s.ensureConnectionStateLocked(connIndex)
 	state := s.connectionStates[connIndex]
 	state.retries = 0
@@ -353,7 +350,7 @@ func (s *Service) serveConnection(connIndex uint8, edgeAddr *EdgeAddr) error {
 	datagramVersion, features := s.currentConnectionFeatures()
 
 	switch protocol {
-	case "quic":
+	case protocolQUIC:
 		err := s.serveQUIC(connIndex, edgeAddr, datagramVersion, features, numPreviousAttempts)
 		if err == nil || s.ctx.Err() != nil {
 			return err
@@ -364,13 +361,13 @@ func (s *Service) serveConnection(connIndex uint8, edgeAddr *EdgeAddr) error {
 		if !s.protocolIsAuto() {
 			return err
 		}
-		if s.hasSuccessfulProtocol("quic") {
+		if s.hasSuccessfulProtocol(protocolQUIC) {
 			return err
 		}
-		s.setConnectionProtocol(connIndex, "http2")
+		s.setConnectionProtocol(connIndex, protocolHTTP2)
 		s.logger.Warn("QUIC connection failed, falling back to HTTP/2: ", err)
 		return s.serveHTTP2(connIndex, edgeAddr, features, numPreviousAttempts)
-	case "http2":
+	case protocolHTTP2:
 		return s.serveHTTP2(connIndex, edgeAddr, features, numPreviousAttempts)
 	default:
 		return E.New("unsupported protocol: ", protocol)
@@ -393,7 +390,7 @@ func (s *Service) serveQUIC(connIndex uint8, edgeAddr *EdgeAddr, datagramVersion
 		s.ctx, edgeAddr, connIndex,
 		s.credentials, s.connectorID, datagramVersion,
 		features, numPreviousAttempts, s.gracePeriod, s.tunnelDialer, func() {
-			s.notifyConnected(connIndex, "quic")
+			s.notifyConnected(connIndex, protocolQUIC)
 		}, s.logger,
 	)
 	if err != nil {
@@ -410,14 +407,7 @@ func (s *Service) serveQUIC(connIndex uint8, edgeAddr *EdgeAddr, datagramVersion
 }
 
 func (s *Service) currentConnectionFeatures() (string, []string) {
-	if s.featureSelector != nil {
-		return s.featureSelector.Snapshot()
-	}
-	version := s.datagramVersion
-	if version == "" {
-		version = defaultDatagramVersion
-	}
-	return version, DefaultFeatures(version)
+	return s.featureSelector.Snapshot()
 }
 
 func (s *Service) serveHTTP2(connIndex uint8, edgeAddr *EdgeAddr, features []string, numPreviousAttempts uint8) error {
@@ -481,9 +471,6 @@ func (s *Service) setConnectionProtocol(connIndex uint8, protocol string) {
 func (s *Service) hasSuccessfulProtocol(protocol string) bool {
 	s.stateAccess.Lock()
 	defer s.stateAccess.Unlock()
-	if s.successfulProtocols == nil {
-		return false
-	}
 	_, ok := s.successfulProtocols[protocol]
 	return ok
 }
@@ -509,7 +496,7 @@ func (s *Service) initialProtocolLocked() string {
 	if s.firstSuccessfulProtocol != "" {
 		return s.firstSuccessfulProtocol
 	}
-	return "quic"
+	return protocolQUIC
 }
 
 func (s *Service) resetDirectOriginTransports() {
@@ -595,7 +582,7 @@ func normalizeProtocol(protocol string) (string, error) {
 	if protocol == "auto" {
 		return "", nil
 	}
-	if protocol != "" && protocol != "quic" && protocol != "http2" {
+	if protocol != "" && protocol != protocolQUIC && protocol != protocolHTTP2 {
 		return "", E.New("unsupported protocol: ", protocol, ", expected auto, quic or http2")
 	}
 	return protocol, nil

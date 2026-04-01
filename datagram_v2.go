@@ -345,7 +345,7 @@ func (s *udpSession) readLoop() {
 			return
 		}
 		s.markActive()
-		s.muxer.sendToEdge(s.id, append([]byte(nil), buffer.Bytes()...))
+		s.muxer.sendToEdge(s.id, buffer.Bytes())
 		buffer.Release()
 	}
 }

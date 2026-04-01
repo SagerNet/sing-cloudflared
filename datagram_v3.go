@@ -367,7 +367,7 @@ func (s *v3Session) readLoop() {
 			continue
 		}
 		s.markActive()
-		err = s.senderDatagram(append([]byte(nil), buffer.Bytes()...))
+		err = s.senderDatagram(buffer.Bytes())
 		if err != nil {
 			buffer.Release()
 			s.close()

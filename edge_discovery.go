@@ -103,7 +103,6 @@ func resolveSRVRecords(records []*net.SRV) ([][]*EdgeAddr, error) {
 	return regions, nil
 }
 
-// version 0 means no filtering (auto).
 func FilterByIPVersion(regions [][]*EdgeAddr, version int) [][]*EdgeAddr {
 	if version == 0 {
 		return regions

@@ -193,7 +193,7 @@ func (c *HTTP2Connection) handleControlStream(ctx context.Context, r *http.Reque
 		return
 	}
 	c.registrationResult = result
-	c.service.notifyConnected(c.connIndex, "http2")
+	c.service.notifyConnected(c.connIndex, protocolHTTP2)
 
 	c.logger.Info("connected to ", result.Location,
 		" (connection ", result.ConnectionID, ")")
@@ -242,7 +242,7 @@ func (c *HTTP2Connection) handleH2DataStream(ctx context.Context, r *http.Reques
 	for name, values := range r.Header {
 		for _, value := range values {
 			request.Metadata = append(request.Metadata, Metadata{
-				Key: metadataHTTPHeader + ":" + name,
+				Key: metadataHTTPHeaderPrefix + name,
 				Val: value,
 			})
 		}
@@ -507,7 +507,8 @@ func shouldFlushHTTPHeaders(headers http.Header) bool {
 	if headers.Get(contentLengthHeader) == "" {
 		return true
 	}
-	if transferEncoding := strings.ToLower(headers.Get(transferEncodingHeader)); transferEncoding != "" && strings.Contains(transferEncoding, chunkTransferEncoding) {
+	transferEncoding := strings.ToLower(headers.Get(transferEncodingHeader))
+	if transferEncoding != "" && strings.Contains(transferEncoding, chunkTransferEncoding) {
 		return true
 	}
 	contentType := strings.ToLower(headers.Get(contentTypeHeader))

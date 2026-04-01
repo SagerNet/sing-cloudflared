@@ -192,15 +192,25 @@ func BuildConnectionOptions(connectorID uuid.UUID, features []string, numPreviou
 	}
 }
 
-func DefaultFeatures(datagramVersion string) []string {
-	features := []string{
+var (
+	defaultFeaturesV2 = []string{
 		"serialized_headers",
 		"support_datagram_v2",
 		"support_quic_eof",
 		"allow_remote_config",
 	}
-	if datagramVersion == "v3" {
-		features = append(features, "support_datagram_v3_2")
+	defaultFeaturesV3 = []string{
+		"serialized_headers",
+		"support_datagram_v2",
+		"support_quic_eof",
+		"allow_remote_config",
+		"support_datagram_v3_2",
 	}
-	return features
+)
+
+func DefaultFeatures(datagramVersion string) []string {
+	if datagramVersion == datagramVersionV3 {
+		return defaultFeaturesV3
+	}
+	return defaultFeaturesV2
 }

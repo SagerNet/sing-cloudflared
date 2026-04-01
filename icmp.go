@@ -152,8 +152,9 @@ const (
 )
 
 type icmpFlowState struct {
-	writer     *ICMPReplyWriter
-	lastActive time.Time
+	writer       *ICMPReplyWriter
+	activeAccess sync.RWMutex
+	lastActive   time.Time
 }
 
 type traceEntry struct {
@@ -295,7 +296,9 @@ func (b *ICMPBridge) handlePacket(ctx context.Context, payload []byte, traceCont
 	}
 
 	state := b.getFlowState(packetInfo.FlowKey())
+	state.activeAccess.Lock()
 	state.lastActive = time.Now()
+	state.activeAccess.Unlock()
 	if traceContext.Traced {
 		state.writer.RegisterRequestTrace(packetInfo, traceContext)
 	}
@@ -355,12 +358,25 @@ func (b *ICMPBridge) cleanupLoop(ctx context.Context) {
 
 func (b *ICMPBridge) cleanupExpired(now time.Time) {
 	b.flowAccess.Lock()
-	defer b.flowAccess.Unlock()
+	var expiredWriters []*ICMPReplyWriter
+	var activeWriters []*ICMPReplyWriter
 	for key, state := range b.flows {
-		state.writer.cleanupExpired(now)
-		if now.After(state.lastActive.Add(icmpFlowTimeout)) {
+		state.activeAccess.RLock()
+		expired := now.After(state.lastActive.Add(icmpFlowTimeout))
+		state.activeAccess.RUnlock()
+		if expired {
+			expiredWriters = append(expiredWriters, state.writer)
 			delete(b.flows, key)
+		} else {
+			activeWriters = append(activeWriters, state.writer)
 		}
+	}
+	b.flowAccess.Unlock()
+	for _, writer := range expiredWriters {
+		writer.cleanupExpired(now)
+	}
+	for _, writer := range activeWriters {
+		writer.cleanupExpired(now)
 	}
 }
 

@@ -14,6 +14,9 @@ const (
 	featureSelectorHostname       = "cfd-features.argotunnel.com"
 	featureLookupTimeout          = 10 * time.Second
 	defaultDatagramVersion        = "v2"
+	datagramVersionV3             = "v3"
+	protocolQUIC                  = "quic"
+	protocolHTTP2                 = "http2"
 	defaultFeatureRefreshInterval = time.Hour
 )
 
@@ -108,7 +111,7 @@ func resolveRemoteDatagramVersion(accountTag string, record []byte) (string, err
 		return "", err
 	}
 	if accountEnabled(accountTag, features.DatagramV3Percentage) {
-		return "v3", nil
+		return datagramVersionV3, nil
 	}
 	return defaultDatagramVersion, nil
 }

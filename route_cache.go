@@ -25,38 +25,41 @@ func newRouteCache(timeout time.Duration) *routeCache {
 
 func (c *routeCache) Lookup(session ICMPRouteSession) (ICMPRouteDestination, bool) {
 	c.access.Lock()
-	defer c.access.Unlock()
 	entry, loaded := c.entries[session]
 	if !loaded {
+		c.access.Unlock()
 		return nil, false
 	}
 	if time.Since(entry.lastAccess) > c.timeout {
 		delete(c.entries, session)
+		c.access.Unlock()
 		entry.destination.Close()
 		return nil, false
 	}
 	entry.lastAccess = time.Now()
+	c.access.Unlock()
 	return entry.destination, true
 }
 
 func (c *routeCache) Store(session ICMPRouteSession, destination ICMPRouteDestination) {
 	c.access.Lock()
-	defer c.access.Unlock()
 	existing, loaded := c.entries[session]
-	if loaded {
-		existing.destination.Close()
-	}
 	c.entries[session] = &routeCacheEntry{
 		destination: destination,
 		lastAccess:  time.Now(),
+	}
+	c.access.Unlock()
+	if loaded {
+		existing.destination.Close()
 	}
 }
 
 func (c *routeCache) Clear() {
 	c.access.Lock()
-	defer c.access.Unlock()
-	for session, entry := range c.entries {
+	entries := c.entries
+	c.entries = make(map[ICMPRouteSession]*routeCacheEntry)
+	c.access.Unlock()
+	for _, entry := range entries {
 		entry.destination.Close()
-		delete(c.entries, session)
 	}
 }

@@ -131,10 +131,10 @@ func serveFixedSocksStream(ctx context.Context, conn net.Conn, targetConn net.Co
 
 func requestHeaderValue(request *ConnectRequest, headerName string) string {
 	for _, entry := range request.Metadata {
-		if !strings.HasPrefix(entry.Key, metadataHTTPHeader+":") {
+		if !strings.HasPrefix(entry.Key, metadataHTTPHeaderPrefix) {
 			continue
 		}
-		name := strings.TrimPrefix(entry.Key, metadataHTTPHeader+":")
+		name := strings.TrimPrefix(entry.Key, metadataHTTPHeaderPrefix)
 		if strings.EqualFold(name, headerName) {
 			return entry.Val
 		}

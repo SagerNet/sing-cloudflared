@@ -3,6 +3,7 @@ package cloudflared
 import (
 	"crypto/x509"
 	_ "embed"
+	"sync"
 
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -10,7 +11,7 @@ import (
 //go:embed cloudflare_ca.pem
 var cloudflareRootCAPEM []byte
 
-func cloudflareRootCertPool() (*x509.CertPool, error) {
+var cloudflareRootCertPoolValue = sync.OnceValues(func() (*x509.CertPool, error) {
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		pool = x509.NewCertPool()
@@ -19,4 +20,8 @@ func cloudflareRootCertPool() (*x509.CertPool, error) {
 		return nil, E.New("failed to parse embedded Cloudflare root CAs")
 	}
 	return pool, nil
+})
+
+func cloudflareRootCertPool() (*x509.CertPool, error) {
+	return cloudflareRootCertPoolValue()
 }

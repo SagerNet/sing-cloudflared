@@ -265,7 +265,7 @@ func buildRemoteRuntimeConfig(raw []byte) (RuntimeConfig, error) {
 	if err != nil {
 		return RuntimeConfig{}, E.Cause(err, "decode remote config")
 	}
-	defaultOriginRequest := originRequestFromRemote(remote.OriginRequest)
+	defaultOriginRequest := mergeRemoteOriginRequest(defaultOriginRequestConfig(), remote.OriginRequest)
 	warpRouting := warpRoutingFromRemote(remote.WarpRouting)
 	var ingressRules []localIngressRule
 	for _, rule := range remote.Ingress {
@@ -546,7 +546,8 @@ func isCatchAllRule(hostname, path string) bool {
 }
 
 func stripPort(hostname string) string {
-	if host, _, err := net.SplitHostPort(hostname); err == nil {
+	host, _, err := net.SplitHostPort(hostname)
+	if err == nil {
 		return host
 	}
 	return hostname
@@ -561,69 +562,6 @@ func defaultOriginRequestConfig() OriginRequestConfig {
 		KeepAliveConnections: defaultKeepAliveConnections,
 		ProxyAddress:         defaultProxyAddress,
 	}
-}
-
-func originRequestFromRemote(input remoteOriginRequestJSON) OriginRequestConfig {
-	config := defaultOriginRequestConfig()
-	if input.ConnectTimeout != 0 {
-		config.ConnectTimeout = time.Duration(input.ConnectTimeout) * time.Second
-	}
-	if input.TLSTimeout != 0 {
-		config.TLSTimeout = time.Duration(input.TLSTimeout) * time.Second
-	}
-	if input.TCPKeepAlive != 0 {
-		config.TCPKeepAlive = time.Duration(input.TCPKeepAlive) * time.Second
-	}
-	if input.KeepAliveTimeout != 0 {
-		config.KeepAliveTimeout = time.Duration(input.KeepAliveTimeout) * time.Second
-	}
-	if input.KeepAliveConnections != nil {
-		config.KeepAliveConnections = *input.KeepAliveConnections
-	}
-	if input.NoHappyEyeballs != nil {
-		config.NoHappyEyeballs = *input.NoHappyEyeballs
-	}
-	config.HTTPHostHeader = input.HTTPHostHeader
-	config.OriginServerName = input.OriginServerName
-	if input.MatchSNIToHost != nil {
-		config.MatchSNIToHost = *input.MatchSNIToHost
-	}
-	config.CAPool = input.CAPool
-	if input.NoTLSVerify != nil {
-		config.NoTLSVerify = *input.NoTLSVerify
-	}
-	if input.DisableChunkedEncoding != nil {
-		config.DisableChunkedEncoding = *input.DisableChunkedEncoding
-	}
-	if input.BastionMode != nil {
-		config.BastionMode = *input.BastionMode
-	}
-	if input.ProxyAddress != "" {
-		config.ProxyAddress = input.ProxyAddress
-	}
-	if input.ProxyPort != nil {
-		config.ProxyPort = *input.ProxyPort
-	}
-	config.ProxyType = input.ProxyType
-	if input.HTTP2Origin != nil {
-		config.HTTP2Origin = *input.HTTP2Origin
-	}
-	if input.Access != nil {
-		config.Access = AccessConfig{
-			Required:    input.Access.Required,
-			TeamName:    input.Access.TeamName,
-			AudTag:      append([]string(nil), input.Access.AudTag...),
-			Environment: input.Access.Environment,
-		}
-	}
-	for _, rule := range input.IPRules {
-		config.IPRules = append(config.IPRules, IPRule{
-			Prefix: rule.Prefix,
-			Ports:  append([]int(nil), rule.Ports...),
-			Allow:  rule.Allow,
-		})
-	}
-	return config
 }
 
 func mergeRemoteOriginRequest(base OriginRequestConfig, override remoteOriginRequestJSON) OriginRequestConfig {

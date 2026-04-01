@@ -245,7 +245,8 @@ func (q *QUICConnection) handleStream(ctx context.Context, stream quicStreamHand
 
 	switch streamType {
 	case StreamTypeData:
-		request, err := ReadConnectRequest(rwc)
+		var request *ConnectRequest
+		request, err = ReadConnectRequest(rwc)
 		if err != nil {
 			q.logger.Debug("failed to read connect request: ", err)
 			stream.CancelWrite(0)
@@ -391,14 +392,14 @@ type nopCloserReadWriter struct {
 	io.ReadWriteCloser
 
 	sawEOF bool
-	closed uint32
+	closed atomic.Bool
 }
 
 func (n *nopCloserReadWriter) Read(p []byte) (int, error) {
 	if n.sawEOF {
 		return 0, io.EOF
 	}
-	if atomic.LoadUint32(&n.closed) > 0 {
+	if n.closed.Load() {
 		return 0, E.New("closed by handler")
 	}
 
@@ -410,6 +411,6 @@ func (n *nopCloserReadWriter) Read(p []byte) (int, error) {
 }
 
 func (n *nopCloserReadWriter) Close() error {
-	atomic.StoreUint32(&n.closed, 1)
+	n.closed.Store(true)
 	return nil
 }
