@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -35,7 +34,6 @@ func quicInitialPacketSize(ipVersion int) uint16 {
 	return initialPacketSize
 }
 
-// QUICConnection manages a single QUIC connection to the Cloudflare edge.
 type QUICConnection struct {
 	conn                quicConnection
 	logger              logger.ContextLogger
@@ -87,7 +85,6 @@ func (c *closeableQUICConn) CloseWithError(code quic.ApplicationErrorCode, reaso
 	return err
 }
 
-// NewQUICConnection dials the edge and establishes a QUIC connection.
 func NewQUICConnection(
 	ctx context.Context,
 	edgeAddr *EdgeAddr,
@@ -145,13 +142,6 @@ func NewQUICConnection(
 	}, nil
 }
 
-// createUDPConnForConnIndex creates a UDP socket for QUIC via the tunnel dialer.
-// Unlike cloudflared, we do not attempt to reuse previously-bound ports across
-// reconnects -- the dialer interface does not support specifying local ports,
-// and fixed port binding is not important for our use case.
-// We also do not apply Darwin-specific udp4/udp6 network selection to work around
-// quic-go#3793 (DF bit on macOS dual-stack); the dialer controls network selection
-// and this is a non-critical platform-specific limitation.
 func createUDPConnForConnIndex(ctx context.Context, edgeAddr *EdgeAddr, tunnelDialer N.Dialer) (*net.UDPConn, error) {
 	packetConn, err := tunnelDialer.ListenPacket(ctx, M.SocksaddrFrom(edgeAddr.UDP.AddrPort().Addr(), edgeAddr.UDP.AddrPort().Port()))
 	if err != nil {
@@ -160,13 +150,11 @@ func createUDPConnForConnIndex(ctx context.Context, edgeAddr *EdgeAddr, tunnelDi
 	udpConn, ok := packetConn.(*net.UDPConn)
 	if !ok {
 		packetConn.Close()
-		return nil, E.New("unexpected packet conn type: ", fmt.Sprintf("%T", packetConn))
+		return nil, E.New("unexpected packet conn type")
 	}
 	return udpConn, nil
 }
 
-// Serve runs the QUIC connection: registers, accepts streams, handles datagrams.
-// Blocks until the context is cancelled or a fatal error occurs.
 func (q *QUICConnection) Serve(ctx context.Context, handler StreamHandler) error {
 	controlStream, err := q.conn.OpenStream()
 	if err != nil {
@@ -280,7 +268,6 @@ func (q *QUICConnection) handleDatagrams(ctx context.Context, handler StreamHand
 	}
 }
 
-// SendDatagram sends a QUIC datagram to the edge.
 func (q *QUICConnection) SendDatagram(data []byte) error {
 	return q.conn.SendDatagram(data)
 }
@@ -357,13 +344,11 @@ func (q *QUICConnection) closeNow(reason string) {
 	})
 }
 
-// Close closes the QUIC connection immediately.
 func (q *QUICConnection) Close() error {
 	q.forceClose()
 	return nil
 }
 
-// StreamHandler handles incoming edge streams and datagrams.
 type StreamHandler interface {
 	HandleDataStream(ctx context.Context, stream io.ReadWriteCloser, request *ConnectRequest, connIndex uint8)
 	HandleRPCStream(ctx context.Context, stream io.ReadWriteCloser, connIndex uint8)
@@ -371,13 +356,10 @@ type StreamHandler interface {
 	HandleDatagram(ctx context.Context, datagram []byte, sender DatagramSender)
 }
 
-// DatagramSender can send QUIC datagrams back to the edge.
 type DatagramSender interface {
 	SendDatagram(data []byte) error
 }
 
-// streamReadWriteCloser adapts a *quic.Stream to io.ReadWriteCloser
-// with mutex-protected writes and safe close semantics.
 type streamReadWriteCloser struct {
 	stream      quicStreamHandle
 	writeAccess sync.Mutex
@@ -405,9 +387,6 @@ func (s *streamReadWriteCloser) Close() error {
 	return s.stream.Close()
 }
 
-// nopCloserReadWriter lets handlers stop consuming the read side without closing
-// the underlying stream write side. This matches cloudflared's QUIC HTTP behavior,
-// where the request body can be closed before the response is fully written.
 type nopCloserReadWriter struct {
 	io.ReadWriteCloser
 

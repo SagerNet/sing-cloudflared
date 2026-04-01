@@ -3,7 +3,6 @@ package cloudflared
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"io"
 	"math/rand"
 	"net/http"
@@ -86,7 +85,7 @@ func connectionRetryDecision(err error) (retry bool, cancelAll bool) {
 	switch {
 	case err == nil:
 		return false, false
-	case errors.Is(err, ErrNonRemoteManagedTunnelUnsupported):
+	case E.IsMulti(err, ErrNonRemoteManagedTunnelUnsupported):
 		return false, true
 	case isPermanentRegistrationError(err):
 		return false, false
@@ -333,8 +332,8 @@ func (s *Service) superviseConnection(connIndex uint8, edgeAddrs []*EdgeAddr) {
 		retries := s.incrementConnectionRetries(connIndex)
 		edgeIndex = rotateEdgeAddrIndex(edgeIndex, len(edgeAddrs))
 		backoff := backoffDuration(int(retries))
-		var retryableErr *RetryableError
-		if errors.As(err, &retryableErr) && retryableErr.Delay > 0 {
+		retryableErr, isRetryable := E.Cast[*RetryableError](err)
+		if isRetryable && retryableErr.Delay > 0 {
 			backoff = retryableErr.Delay
 		}
 		s.logger.Error("connection ", connIndex, " failed: ", err, ", retrying in ", backoff)
@@ -359,7 +358,7 @@ func (s *Service) serveConnection(connIndex uint8, edgeAddr *EdgeAddr) error {
 		if err == nil || s.ctx.Err() != nil {
 			return err
 		}
-		if errors.Is(err, ErrNonRemoteManagedTunnelUnsupported) {
+		if E.IsMulti(err, ErrNonRemoteManagedTunnelUnsupported) {
 			return err
 		}
 		if !s.protocolIsAuto() {
@@ -576,10 +575,7 @@ func effectiveHAConnections(requested, available int) int {
 	if available <= 0 {
 		return 0
 	}
-	if requested > available {
-		return available
-	}
-	return requested
+	return min(requested, available)
 }
 
 func parseToken(token string) (Credentials, error) {

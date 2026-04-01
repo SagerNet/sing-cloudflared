@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/binary"
 	"io"
 	"net"
 	"net/http"
@@ -117,58 +118,7 @@ func isSocksProxyType(proxyType string) bool {
 }
 
 func serveFixedSocksStream(ctx context.Context, conn net.Conn, targetConn net.Conn) error {
-	version := make([]byte, 1)
-	_, err := io.ReadFull(conn, version)
-	if err != nil {
-		return err
-	}
-	if version[0] != 5 {
-		return E.New("unsupported SOCKS version: ", version[0])
-	}
-
-	methodCount := make([]byte, 1)
-	_, err = io.ReadFull(conn, methodCount)
-	if err != nil {
-		return err
-	}
-	methods := make([]byte, int(methodCount[0]))
-	_, err = io.ReadFull(conn, methods)
-	if err != nil {
-		return err
-	}
-
-	var supportsNoAuth bool
-	for _, method := range methods {
-		if method == 0 {
-			supportsNoAuth = true
-			break
-		}
-	}
-	if !supportsNoAuth {
-		_, err = conn.Write([]byte{5, 255})
-		if err != nil {
-			return err
-		}
-		return E.New("unknown authentication type")
-	}
-	_, err = conn.Write([]byte{5, 0})
-	if err != nil {
-		return err
-	}
-
-	requestHeader := make([]byte, 4)
-	_, err = io.ReadFull(conn, requestHeader)
-	if err != nil {
-		return err
-	}
-	if requestHeader[0] != 5 {
-		return E.New("unsupported SOCKS request version: ", requestHeader[0])
-	}
-	if requestHeader[1] != 1 {
-		_ = writeSocksReply(conn, socksReplyCommandNotSupported)
-		return E.New("unsupported SOCKS command: ", requestHeader[1])
-	}
-	_, err = readSocksDestination(conn, requestHeader[3])
+	_, err := readSocksHandshake(conn)
 	if err != nil {
 		return err
 	}
@@ -208,58 +158,7 @@ func (s *Service) dialRouterTCP(ctx context.Context, destination M.Socksaddr) (n
 }
 
 func (s *Service) serveSocksProxy(ctx context.Context, conn net.Conn, policy *ipRulePolicy) error {
-	version := make([]byte, 1)
-	_, err := io.ReadFull(conn, version)
-	if err != nil {
-		return err
-	}
-	if version[0] != 5 {
-		return E.New("unsupported SOCKS version: ", version[0])
-	}
-
-	methodCount := make([]byte, 1)
-	_, err = io.ReadFull(conn, methodCount)
-	if err != nil {
-		return err
-	}
-	methods := make([]byte, int(methodCount[0]))
-	_, err = io.ReadFull(conn, methods)
-	if err != nil {
-		return err
-	}
-	var supportsNoAuth bool
-	for _, method := range methods {
-		if method == 0 {
-			supportsNoAuth = true
-			break
-		}
-	}
-	if !supportsNoAuth {
-		_, err = conn.Write([]byte{5, 255})
-		if err != nil {
-			return err
-		}
-		return E.New("unknown authentication type")
-	}
-	_, err = conn.Write([]byte{5, 0})
-	if err != nil {
-		return err
-	}
-
-	requestHeader := make([]byte, 4)
-	_, err = io.ReadFull(conn, requestHeader)
-	if err != nil {
-		return err
-	}
-	if requestHeader[0] != 5 {
-		return E.New("unsupported SOCKS request version: ", requestHeader[0])
-	}
-	if requestHeader[1] != 1 {
-		_ = writeSocksReply(conn, socksReplyCommandNotSupported)
-		return E.New("unsupported SOCKS command: ", requestHeader[1])
-	}
-
-	destination, err := readSocksDestination(conn, requestHeader[3])
+	destination, err := readSocksHandshake(conn)
 	if err != nil {
 		return err
 	}
@@ -301,6 +200,61 @@ func socksReplyForDialError(err error) byte {
 	default:
 		return socksReplyHostUnreachable
 	}
+}
+
+func readSocksHandshake(conn net.Conn) (M.Socksaddr, error) {
+	version := make([]byte, 1)
+	_, err := io.ReadFull(conn, version)
+	if err != nil {
+		return M.Socksaddr{}, err
+	}
+	if version[0] != 5 {
+		return M.Socksaddr{}, E.New("unsupported SOCKS version: ", version[0])
+	}
+
+	methodCount := make([]byte, 1)
+	_, err = io.ReadFull(conn, methodCount)
+	if err != nil {
+		return M.Socksaddr{}, err
+	}
+	methods := make([]byte, int(methodCount[0]))
+	_, err = io.ReadFull(conn, methods)
+	if err != nil {
+		return M.Socksaddr{}, err
+	}
+
+	var supportsNoAuth bool
+	for _, method := range methods {
+		if method == 0 {
+			supportsNoAuth = true
+			break
+		}
+	}
+	if !supportsNoAuth {
+		_, err = conn.Write([]byte{5, 255})
+		if err != nil {
+			return M.Socksaddr{}, err
+		}
+		return M.Socksaddr{}, E.New("unknown authentication type")
+	}
+	_, err = conn.Write([]byte{5, 0})
+	if err != nil {
+		return M.Socksaddr{}, err
+	}
+
+	requestHeader := make([]byte, 4)
+	_, err = io.ReadFull(conn, requestHeader)
+	if err != nil {
+		return M.Socksaddr{}, err
+	}
+	if requestHeader[0] != 5 {
+		return M.Socksaddr{}, E.New("unsupported SOCKS request version: ", requestHeader[0])
+	}
+	if requestHeader[1] != 1 {
+		_ = writeSocksReply(conn, socksReplyCommandNotSupported)
+		return M.Socksaddr{}, E.New("unsupported SOCKS command: ", requestHeader[1])
+	}
+	return readSocksDestination(conn, requestHeader[3])
 }
 
 func readSocksDestination(conn net.Conn, addressType byte) (M.Socksaddr, error) {
@@ -362,5 +316,5 @@ func readSocksPort(conn net.Conn) (uint16, error) {
 	if err != nil {
 		return 0, err
 	}
-	return uint16(port[0])<<8 | uint16(port[1]), nil
+	return binary.BigEndian.Uint16(port), nil
 }

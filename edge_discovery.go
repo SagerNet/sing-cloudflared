@@ -28,15 +28,12 @@ func getRegionalServiceName(region string) string {
 	return region + "-" + edgeSRVService
 }
 
-// EdgeAddr represents a Cloudflare edge server address.
 type EdgeAddr struct {
 	TCP       *net.TCPAddr
 	UDP       *net.UDPAddr
 	IPVersion int // 4 or 6
 }
 
-// DiscoverEdge performs SRV-based edge discovery and returns addresses
-// partitioned into regions (typically 2).
 func DiscoverEdge(ctx context.Context, region string, controlDialer N.Dialer) ([][]*EdgeAddr, error) {
 	regions, err := lookupEdgeSRV(region)
 	if err != nil {
@@ -106,7 +103,6 @@ func resolveSRVRecords(records []*net.SRV) ([][]*EdgeAddr, error) {
 	return regions, nil
 }
 
-// FilterByIPVersion filters edge addresses to only include the specified IP version.
 // version 0 means no filtering (auto).
 func FilterByIPVersion(regions [][]*EdgeAddr, version int) [][]*EdgeAddr {
 	if version == 0 {

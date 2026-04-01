@@ -37,8 +37,6 @@ const (
 
 var flushableContentTypes = []string{sseContentType, grpcContentType, ndjsonContentType}
 
-// HTTP2Connection manages a single HTTP/2 connection to the Cloudflare edge.
-// Uses role reversal: we dial the edge as a TLS client but serve HTTP/2 as server.
 type HTTP2Connection struct {
 	conn        net.Conn
 	server      *http2.Server
@@ -63,7 +61,6 @@ type HTTP2Connection struct {
 	closeOnce         sync.Once
 }
 
-// NewHTTP2Connection dials the edge and establishes an HTTP/2 connection with role reversal.
 func NewHTTP2Connection(
 	ctx context.Context,
 	edgeAddr *EdgeAddr,
@@ -112,7 +109,6 @@ func NewHTTP2Connection(
 	}, nil
 }
 
-// Serve runs the HTTP/2 server. Blocks until the context is cancelled or the connection ends.
 func (c *HTTP2Connection) Serve(ctx context.Context) error {
 	serveCtx, serveCancel := context.WithCancel(context.WithoutCancel(ctx))
 	c.serveCancel = serveCancel
@@ -269,6 +265,11 @@ func (c *HTTP2Connection) handleH2DataStream(ctx context.Context, r *http.Reques
 	c.service.dispatchRequest(ctx, stream, respWriter, request)
 }
 
+type h2ConfigurationUpdateResponse struct {
+	LastAppliedVersion int32   `json:"lastAppliedVersion"`
+	Err                *string `json:"err"`
+}
+
 type h2ConfigurationUpdateBody struct {
 	Version int32           `json:"version"`
 	Config  json.RawMessage `json:"config"`
@@ -285,11 +286,15 @@ func (c *HTTP2Connection) handleConfigurationUpdate(r *http.Request, w http.Resp
 	}
 	result := c.service.ApplyConfig(body.Version, body.Config)
 	w.WriteHeader(http.StatusOK)
-	if result.Err != nil {
-		w.Write([]byte(`{"lastAppliedVersion":` + strconv.FormatInt(int64(result.LastAppliedVersion), 10) + `,"err":` + strconv.Quote(result.Err.Error()) + `}`))
-		return
+	response := h2ConfigurationUpdateResponse{
+		LastAppliedVersion: result.LastAppliedVersion,
 	}
-	w.Write([]byte(`{"lastAppliedVersion":` + strconv.FormatInt(int64(result.LastAppliedVersion), 10) + `,"err":null}`))
+	if result.Err != nil {
+		errString := result.Err.Error()
+		response.Err = &errString
+	}
+	data, _ := json.Marshal(response)
+	w.Write(data)
 }
 
 func (c *HTTP2Connection) gracefulShutdown() {
@@ -357,14 +362,11 @@ func (c *HTTP2Connection) closeNow() {
 	})
 }
 
-// Close closes the HTTP/2 connection.
 func (c *HTTP2Connection) Close() error {
 	c.forceClose()
 	return nil
 }
 
-// http2Stream wraps an HTTP/2 request body (reader) and a flush-writer (writer) as an io.ReadWriteCloser.
-// Used for the control stream.
 type http2Stream struct {
 	reader io.ReadCloser
 	writer io.Writer
@@ -378,7 +380,6 @@ func (s *http2Stream) Read(p []byte) (int, error)  { return s.reader.Read(p) }
 func (s *http2Stream) Write(p []byte) (int, error) { return s.writer.Write(p) }
 func (s *http2Stream) Close() error                { return s.reader.Close() }
 
-// http2FlushWriter wraps an http.ResponseWriter and flushes after every write.
 type http2FlushWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
@@ -392,7 +393,6 @@ func (w *http2FlushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// http2DataStream wraps an HTTP/2 request/response pair as io.ReadWriteCloser for data streams.
 type http2DataStream struct {
 	reader  io.ReadCloser
 	writer  http.ResponseWriter
@@ -426,7 +426,6 @@ func (s *http2DataStream) Close() error {
 	return s.reader.Close()
 }
 
-// http2ResponseWriter translates ConnectResponse metadata to HTTP/2 response headers.
 type http2ResponseWriter struct {
 	writer      http.ResponseWriter
 	flusher     http.Flusher

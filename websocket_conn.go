@@ -1,10 +1,11 @@
 package cloudflared
 
 import (
-	"errors"
 	"io"
 	"net"
 	"time"
+
+	E "github.com/sagernet/sing/common/exceptions"
 
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
@@ -82,15 +83,15 @@ func (c *websocketConn) Close() error {
 }
 
 func isRetryableReadError(err error) bool {
-	return errors.Is(err, io.EOF) || errors.Is(err, wsutil.ErrNoFrameAdvance)
+	return E.IsMulti(err, io.EOF, wsutil.ErrNoFrameAdvance)
 }
 
 func wrapWebsocketError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var closedErr wsutil.ClosedError
-	if errors.As(err, &closedErr) {
+	closedErr, isClosedErr := E.Cast[wsutil.ClosedError](err)
+	if isClosedErr {
 		if closedErr.Code == ws.StatusNormalClosure || closedErr.Code == ws.StatusNoStatusRcvd {
 			return io.EOF
 		}

@@ -5,31 +5,6 @@ import (
 	"testing"
 )
 
-func TestParseHTTPDestination(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		dest     string
-		expected string
-	}{
-		{"http with port", "http://127.0.0.1:8083/path", "127.0.0.1:8083"},
-		{"https default port", "https://example.com", "example.com:443"},
-		{"http default port", "http://example.com", "example.com:80"},
-		{"wss default port", "wss://example.com/ws", "example.com:443"},
-		{"explicit port", "https://example.com:9443/api", "example.com:9443"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := parseHTTPDestination(tt.dest)
-			if result.String() != tt.expected {
-				t.Errorf("parseHTTPDestination(%q) = %q, want %q", tt.dest, result.String(), tt.expected)
-			}
-		})
-	}
-}
-
 func TestSerializeHeaders(t *testing.T) {
 	t.Parallel()
 	header := http.Header{}

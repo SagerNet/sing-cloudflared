@@ -22,7 +22,6 @@ import (
 
 // V2 wire format: [payload | 16B sessionID | 1B type] (suffix-based)
 
-// DatagramV2Type identifies the type of a V2 datagram.
 type DatagramV2Type byte
 
 const (
@@ -35,7 +34,6 @@ const (
 	typeIDLength    = 1
 )
 
-// DatagramV2Muxer handles V2 datagram demuxing and session management.
 type DatagramV2Muxer struct {
 	service *Service
 	logger  logger.ContextLogger
@@ -46,7 +44,6 @@ type DatagramV2Muxer struct {
 	sessions      map[uuid.UUID]*udpSession
 }
 
-// NewDatagramV2Muxer creates a new V2 datagram muxer.
 func NewDatagramV2Muxer(service *Service, sender DatagramSender, log logger.ContextLogger) *DatagramV2Muxer {
 	return &DatagramV2Muxer{
 		service:  service,
@@ -76,7 +73,7 @@ var newV2SessionRPCClient = func(ctx context.Context, sender DatagramSender) (v2
 		return nil, err
 	}
 	transport := safeTransport(stream)
-	conn := newRPCClientConn(transport, ctx)
+	conn := newRPCClientConn(transport)
 	return &capnpV2SessionRPCClient{
 		client:    tunnelrpc.SessionManager{Client: conn.Bootstrap(ctx)},
 		rpcConn:   conn,
@@ -106,7 +103,6 @@ func (c *capnpV2SessionRPCClient) Close() error {
 	return E.Errors(c.rpcConn.Close(), c.transport.Close())
 }
 
-// HandleDatagram demuxes an incoming V2 datagram.
 func (m *DatagramV2Muxer) HandleDatagram(ctx context.Context, data []byte) {
 	if len(data) < typeIDLength {
 		return
@@ -157,7 +153,6 @@ func (m *DatagramV2Muxer) handleUDPDatagram(ctx context.Context, data []byte) {
 	session.writeToOrigin(payload)
 }
 
-// RegisterSession registers a new UDP session from an RPC call.
 func (m *DatagramV2Muxer) RegisterSession(
 	ctx context.Context,
 	sessionID uuid.UUID,
@@ -210,7 +205,6 @@ func (m *DatagramV2Muxer) RegisterSession(
 	return nil
 }
 
-// UnregisterSession removes a UDP session.
 func (m *DatagramV2Muxer) UnregisterSession(sessionID uuid.UUID, message string) {
 	m.sessionAccess.Lock()
 	session, exists := m.sessions[sessionID]
@@ -247,7 +241,6 @@ func (m *DatagramV2Muxer) serveSession(ctx context.Context, session *udpSession,
 	}
 }
 
-// sendToEdge sends a V2 UDP datagram back to the edge.
 func (m *DatagramV2Muxer) sendToEdge(sessionID uuid.UUID, payload []byte) {
 	data := make([]byte, len(payload)+sessionIDLength+typeIDLength)
 	copy(data, payload)
@@ -256,7 +249,6 @@ func (m *DatagramV2Muxer) sendToEdge(sessionID uuid.UUID, payload []byte) {
 	m.sender.SendDatagram(data)
 }
 
-// Close closes all sessions.
 func (m *DatagramV2Muxer) Close() {
 	m.sessionAccess.Lock()
 	sessions := m.sessions
@@ -268,7 +260,6 @@ func (m *DatagramV2Muxer) Close() {
 	}
 }
 
-// udpSession represents a V2 UDP session.
 type udpSession struct {
 	id             uuid.UUID
 	destination    netip.AddrPort
@@ -422,7 +413,6 @@ func (s *udpSession) closeReason() string {
 	return s.closeReasonString
 }
 
-// ReadPacket implements N.PacketConn - reads packets from the edge to forward to origin.
 func (s *udpSession) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 	select {
 	case data := <-s.writeChan:
@@ -433,7 +423,6 @@ func (s *udpSession) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 	}
 }
 
-// WritePacket implements N.PacketConn - receives packets from origin to forward to edge.
 func (s *udpSession) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	s.muxer.sendToEdge(s.id, buffer.Bytes())
 	return nil
@@ -457,8 +446,6 @@ func (m *DatagramV2Muxer) unregisterRemoteSession(ctx context.Context, sessionID
 	defer client.Close()
 	return client.UnregisterSession(ctx, sessionID, message)
 }
-
-// V2 RPC server implementation for HandleRPCStream.
 
 type cloudflaredServer struct {
 	service *Service
@@ -530,24 +517,9 @@ func (s *cloudflaredServer) UnregisterUdpSession(call tunnelrpc.SessionManager_u
 }
 
 func (s *cloudflaredServer) UpdateConfiguration(call tunnelrpc.ConfigurationManager_updateConfiguration) error {
-	server.Ack(call.Options)
-	version := call.Params.Version()
-	configData, _ := call.Params.Config()
-	updateResult := s.service.ApplyConfig(version, configData)
-	result, err := call.Results.NewResult()
-	if err != nil {
-		return err
-	}
-	result.SetLatestAppliedVersion(updateResult.LastAppliedVersion)
-	if updateResult.Err != nil {
-		result.SetErr(updateResult.Err.Error())
-	} else {
-		result.SetErr("")
-	}
-	return nil
+	return handleUpdateConfiguration(s.service, call)
 }
 
-// ServeRPCStream handles an incoming V2 RPC stream (session management + configuration).
 func ServeRPCStream(ctx context.Context, stream io.ReadWriteCloser, service *Service, muxer *DatagramV2Muxer, log logger.ContextLogger) {
 	srv := &cloudflaredServer{
 		service: service,
@@ -556,16 +528,5 @@ func ServeRPCStream(ctx context.Context, stream io.ReadWriteCloser, service *Ser
 		logger:  log,
 	}
 	client := tunnelrpc.CloudflaredServer_ServerToClient(srv)
-	transport := safeTransport(stream)
-	rpcConn := newRPCServerConn(transport, client.Client)
-	rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
-	defer cancel()
-	select {
-	case <-rpcConn.Done():
-	case <-rpcCtx.Done():
-	}
-	E.Errors(
-		rpcConn.Close(),
-		transport.Close(),
-	)
+	serveRPCConn(ctx, stream, client.Client)
 }

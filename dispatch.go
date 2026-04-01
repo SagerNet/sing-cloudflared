@@ -152,24 +152,6 @@ func (s *Service) resolveHTTPService(requestURL string) (ResolvedService, string
 	return service, originURL, nil
 }
 
-func parseHTTPDestination(dest string) M.Socksaddr {
-	parsed, err := url.Parse(dest)
-	if err != nil {
-		return M.ParseSocksaddr(dest)
-	}
-	host := parsed.Hostname()
-	port := parsed.Port()
-	if port == "" {
-		switch parsed.Scheme {
-		case "https", "wss":
-			port = "443"
-		default:
-			port = "80"
-		}
-	}
-	return M.ParseSocksaddr(net.JoinHostPort(host, port))
-}
-
 func (s *Service) handleTCPStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, destination M.Socksaddr) {
 	s.logger.InfoContext(ctx, "inbound TCP connection to ", destination)
 	limit := s.maxActiveFlows()
@@ -237,12 +219,7 @@ func (s *Service) handleHTTPService(ctx context.Context, stream io.ReadWriteClos
 		}
 		return
 	case ResolvedServiceHTTP:
-		destination := service.Destination
-		if request.Type == ConnectionTypeHTTP {
-			s.handleHTTPStream(ctx, stream, respWriter, request, destination, service)
-		} else {
-			s.handleWebSocketStream(ctx, stream, respWriter, request, destination, service)
-		}
+		s.handleRouterOriginStream(ctx, stream, respWriter, request, service.Destination, service)
 	case ResolvedServiceStream:
 		if request.Type != ConnectionTypeWebsocket {
 			err = E.New("stream service requires websocket request type")
@@ -252,11 +229,7 @@ func (s *Service) handleHTTPService(ctx context.Context, stream io.ReadWriteClos
 		}
 		s.handleStreamService(ctx, stream, respWriter, request, service)
 	case ResolvedServiceUnix, ResolvedServiceUnixTLS:
-		if request.Type == ConnectionTypeHTTP {
-			s.handleDirectHTTPStream(ctx, stream, respWriter, request, service)
-		} else {
-			s.handleDirectWebSocketStream(ctx, stream, respWriter, request, service)
-		}
+		s.handleDirectOriginStream(ctx, stream, respWriter, request, service)
 	case ResolvedServiceBastion:
 		if request.Type != ConnectionTypeWebsocket {
 			err = E.New("bastion service requires websocket request type")
@@ -280,8 +253,8 @@ func (s *Service) handleHTTPService(ctx context.Context, stream io.ReadWriteClos
 	}
 }
 
-func (s *Service) handleHTTPStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, destination M.Socksaddr, service ResolvedService) {
-	s.logger.InfoContext(ctx, "inbound HTTP connection to ", destination)
+func (s *Service) handleRouterOriginStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, destination M.Socksaddr, service ResolvedService) {
+	s.logger.InfoContext(ctx, "inbound ", request.Type, " connection to ", destination)
 
 	transport, cleanup, err := s.newRouterOriginTransport(ctx, destination, service.OriginRequest, request.MetadataMap()[metadataHTTPHost])
 	if err != nil {
@@ -293,34 +266,8 @@ func (s *Service) handleHTTPStream(ctx context.Context, stream io.ReadWriteClose
 	s.roundTripHTTP(ctx, stream, respWriter, request, service, transport)
 }
 
-func (s *Service) handleWebSocketStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, destination M.Socksaddr, service ResolvedService) {
-	s.logger.InfoContext(ctx, "inbound WebSocket connection to ", destination)
-
-	transport, cleanup, err := s.newRouterOriginTransport(ctx, destination, service.OriginRequest, request.MetadataMap()[metadataHTTPHost])
-	if err != nil {
-		s.logger.ErrorContext(ctx, "build origin transport: ", err)
-		respWriter.WriteResponse(err, nil)
-		return
-	}
-	defer cleanup()
-	s.roundTripHTTP(ctx, stream, respWriter, request, service, transport)
-}
-
-func (s *Service) handleDirectHTTPStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
-	s.logger.InfoContext(ctx, "inbound HTTP connection to ", request.Dest)
-
-	transport, cleanup, err := s.newDirectOriginTransport(service, request.MetadataMap()[metadataHTTPHost])
-	if err != nil {
-		s.logger.ErrorContext(ctx, "build direct origin transport: ", err)
-		respWriter.WriteResponse(err, nil)
-		return
-	}
-	defer cleanup()
-	s.roundTripHTTP(ctx, stream, respWriter, request, service, transport)
-}
-
-func (s *Service) handleDirectWebSocketStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
-	s.logger.InfoContext(ctx, "inbound WebSocket connection to ", request.Dest)
+func (s *Service) handleDirectOriginStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
+	s.logger.InfoContext(ctx, "inbound ", request.Type, " connection to ", request.Dest)
 
 	transport, cleanup, err := s.newDirectOriginTransport(service, request.MetadataMap()[metadataHTTPHost])
 	if err != nil {
@@ -424,9 +371,6 @@ func (s *Service) newDirectOriginTransport(service ResolvedService, requestHost 
 	}
 
 	s.directTransportAccess.Lock()
-	if s.directTransports == nil {
-		s.directTransports = make(map[string]*http.Transport)
-	}
 	if transport, exists := s.directTransports[cacheKey]; exists {
 		s.directTransportAccess.Unlock()
 		return transport, func() {}, nil
@@ -464,9 +408,6 @@ func (s *Service) newDirectOriginTransport(service ResolvedService, requestHost 
 	}
 
 	s.directTransportAccess.Lock()
-	if s.directTransports == nil {
-		s.directTransports = make(map[string]*http.Transport)
-	}
 	if cached, exists := s.directTransports[cacheKey]; exists {
 		s.directTransportAccess.Unlock()
 		transport.CloseIdleConnections()
@@ -622,14 +563,11 @@ func buildHTTPRequestFromMetadata(ctx context.Context, connectRequest *ConnectRe
 	request.Host = host
 
 	for _, entry := range connectRequest.Metadata {
-		if !strings.Contains(entry.Key, metadataHTTPHeader) {
+		if !strings.HasPrefix(entry.Key, metadataHTTPHeader+":") {
 			continue
 		}
-		parts := strings.SplitN(entry.Key, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		request.Header.Add(parts[1], entry.Val)
+		headerName := strings.TrimPrefix(entry.Key, metadataHTTPHeader+":")
+		request.Header.Add(headerName, entry.Val)
 	}
 
 	contentLengthStr := request.Header.Get("Content-Length")

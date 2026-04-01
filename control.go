@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 	"runtime"
@@ -22,7 +21,6 @@ const (
 
 var clientVersion = "sing-cloudflared"
 
-// RegistrationClient handles the Cap'n Proto RPC for tunnel registration.
 type RegistrationClient struct {
 	client    tunnelrpc.TunnelServer
 	rpcConn   *rpc.Conn
@@ -60,15 +58,13 @@ func (e *permanentRegistrationError) Unwrap() error {
 }
 
 func isPermanentRegistrationError(err error) bool {
-	var permanentErr *permanentRegistrationError
-	return errors.As(err, &permanentErr)
+	_, found := E.Cast[*permanentRegistrationError](err)
+	return found
 }
 
-// NewRegistrationClient creates a Cap'n Proto RPC client over the given stream.
-// The stream should be the first QUIC stream (control stream).
 func NewRegistrationClient(ctx context.Context, stream io.ReadWriteCloser) *RegistrationClient {
 	transport := safeTransport(stream)
-	conn := newRPCClientConn(transport, ctx)
+	conn := newRPCClientConn(transport)
 	return &RegistrationClient{
 		client:    tunnelrpc.TunnelServer{Client: conn.Bootstrap(ctx)},
 		rpcConn:   conn,
@@ -76,7 +72,6 @@ func NewRegistrationClient(ctx context.Context, stream io.ReadWriteCloser) *Regi
 	}
 }
 
-// RegisterConnection registers this tunnel connection with the edge.
 func (c *RegistrationClient) RegisterConnection(
 	ctx context.Context,
 	auth TunnelAuth,
@@ -88,7 +83,6 @@ func (c *RegistrationClient) RegisterConnection(
 	defer cancel()
 
 	promise := c.client.RegisterConnection(ctx, func(p tunnelrpc.RegistrationServer_registerConnection_Params) error {
-		// Marshal TunnelAuth
 		tunnelAuth, err := p.NewAuth()
 		if err != nil {
 			return err
@@ -102,16 +96,13 @@ func (c *RegistrationClient) RegisterConnection(
 			return err
 		}
 
-		// Set tunnel ID
 		err = p.SetTunnelId(tunnelID[:])
 		if err != nil {
 			return err
 		}
 
-		// Set connection index
 		p.SetConnIndex(connIndex)
 
-		// Marshal ConnectionOptions
 		connOptions, err := p.NewOptions()
 		if err != nil {
 			return err
@@ -166,14 +157,12 @@ func (c *RegistrationClient) RegisterConnection(
 	}
 }
 
-// Unregister sends the UnregisterConnection RPC.
 func (c *RegistrationClient) Unregister(ctx context.Context) error {
 	promise := c.client.UnregisterConnection(ctx, nil)
 	_, err := promise.Struct()
 	return err
 }
 
-// Close closes the RPC connection and transport.
 func (c *RegistrationClient) Close() error {
 	return E.Errors(
 		c.rpcConn.Close(),
@@ -188,7 +177,6 @@ func validateRegistrationResult(result *RegistrationResult) error {
 	return ErrNonRemoteManagedTunnelUnsupported
 }
 
-// BuildConnectionOptions creates the ConnectionOptions to send during registration.
 func BuildConnectionOptions(connectorID uuid.UUID, features []string, numPreviousAttempts uint8, originLocalIP net.IP) *RegistrationConnectionOptions {
 	return &RegistrationConnectionOptions{
 		Client: RegistrationClientInfo{
@@ -204,7 +192,6 @@ func BuildConnectionOptions(connectorID uuid.UUID, features []string, numPreviou
 	}
 }
 
-// DefaultFeatures returns the feature strings to advertise.
 func DefaultFeatures(datagramVersion string) []string {
 	features := []string{
 		"serialized_headers",

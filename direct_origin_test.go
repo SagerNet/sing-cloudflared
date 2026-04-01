@@ -29,7 +29,9 @@ func TestNewDirectOriginTransportUnix(t *testing.T) {
 		_, _ = writer.Write([]byte("unix-ok"))
 	})
 
-	serviceInstance := &Service{}
+	serviceInstance := &Service{
+		directTransports: make(map[string]*http.Transport),
+	}
 	transport, cleanup, err := serviceInstance.newDirectOriginTransport(ResolvedService{
 		Kind:     ResolvedServiceUnix,
 		UnixPath: socketPath,

@@ -74,7 +74,7 @@ func newRPCClientPair(t *testing.T, ctx context.Context) (tunnelrpc.CloudflaredS
 
 	serverSide, clientSide := net.Pipe()
 	transport := safeTransport(clientSide)
-	clientConn := newRPCClientConn(transport, ctx)
+	clientConn := newRPCClientConn(transport)
 	client := tunnelrpc.CloudflaredServer{Client: clientConn.Bootstrap(ctx)}
 	return client, clientConn, transport, serverSide, clientSide
 }

@@ -13,7 +13,6 @@ import (
 	"zombiezen.com/go/capnproto2/pogs"
 )
 
-// Protocol signatures distinguish stream types.
 var (
 	dataStreamSignature = [6]byte{0x0A, 0x36, 0xCD, 0x12, 0xA1, 0x3E}
 	rpcStreamSignature  = [6]byte{0x52, 0xBB, 0x82, 0x5C, 0xDB, 0x65}
@@ -21,7 +20,6 @@ var (
 
 const protocolVersion = "01"
 
-// StreamType identifies the kind of QUIC stream.
 type StreamType int
 
 const (
@@ -31,7 +29,6 @@ const (
 
 const metadataFlowConnectRateLimited = "FlowConnectRateLimited"
 
-// ConnectionType indicates the proxied connection type within a data stream.
 type ConnectionType uint16
 
 const (
@@ -53,7 +50,6 @@ func (c ConnectionType) String() string {
 	}
 }
 
-// Metadata is a key-value pair in stream metadata.
 type Metadata struct {
 	Key string `capnp:"key"`
 	Val string `capnp:"val"`
@@ -75,7 +71,6 @@ func hasFlowConnectRateLimited(metadata []Metadata) bool {
 	return false
 }
 
-// ConnectRequest is sent by the edge at the start of a data stream.
 type ConnectRequest struct {
 	Dest     string         `capnp:"dest"`
 	Type     ConnectionType `capnp:"type"`
@@ -98,7 +93,6 @@ func (r *ConnectRequest) fromCapnp(msg *capnp.Message) error {
 	return pogs.Extract(r, tunnelrpc.ConnectRequest_TypeID, root.Struct)
 }
 
-// ConnectResponse is sent back to the edge after processing a ConnectRequest.
 type ConnectResponse struct {
 	Error    string     `capnp:"error"`
 	Metadata []Metadata `capnp:"metadata"`
@@ -120,7 +114,6 @@ func (r *ConnectResponse) toCapnp() (*capnp.Message, error) {
 	return msg, nil
 }
 
-// ReadStreamSignature reads the 6-byte stream type signature.
 func ReadStreamSignature(r io.Reader) (StreamType, error) {
 	var signature [6]byte
 	_, err := io.ReadFull(r, signature[:])
@@ -137,7 +130,6 @@ func ReadStreamSignature(r io.Reader) (StreamType, error) {
 	}
 }
 
-// ReadConnectRequest reads the version and ConnectRequest from a data stream.
 func ReadConnectRequest(r io.Reader) (*ConnectRequest, error) {
 	version := make([]byte, 2)
 	_, err := io.ReadFull(r, version)
@@ -158,7 +150,6 @@ func ReadConnectRequest(r io.Reader) (*ConnectRequest, error) {
 	return request, nil
 }
 
-// WriteConnectResponse writes a ConnectResponse with the data stream preamble.
 func WriteConnectResponse(w io.Writer, responseError error, metadata ...Metadata) error {
 	response := &ConnectResponse{
 		Metadata: metadata,
@@ -172,7 +163,6 @@ func WriteConnectResponse(w io.Writer, responseError error, metadata ...Metadata
 		return E.Cause(err, "encode connect response")
 	}
 
-	// Write data stream preamble
 	_, err = w.Write(dataStreamSignature[:])
 	if err != nil {
 		return err
@@ -188,8 +178,6 @@ func WriteRPCStreamSignature(w io.Writer) error {
 	_, err := w.Write(rpcStreamSignature[:])
 	return err
 }
-
-// Registration data structures for the control stream.
 
 type RegistrationTunnelAuth struct {
 	AccountTag   string `capnp:"accountTag"`
@@ -211,14 +199,12 @@ type RegistrationConnectionOptions struct {
 	NumPreviousAttempts uint8                  `capnp:"numPreviousAttempts"`
 }
 
-// RegistrationResult is the parsed result of a RegisterConnection RPC.
 type RegistrationResult struct {
 	ConnectionID            uuid.UUID
 	Location                string
 	TunnelIsRemotelyManaged bool
 }
 
-// RetryableError signals the edge wants us to retry after a delay.
 type RetryableError struct {
 	Err   error
 	Delay time.Duration

@@ -105,7 +105,9 @@ func TestOriginTransportUsesProxyFromEnvironmentOnly(t *testing.T) {
 		proxyFromEnvironment = originalProxyFromEnvironment
 	}()
 
-	serviceInstance := &Service{}
+	serviceInstance := &Service{
+		directTransports: make(map[string]*http.Transport),
+	}
 	transport, cleanup, err := serviceInstance.newDirectOriginTransport(ResolvedService{
 		Kind:     ResolvedServiceUnix,
 		UnixPath: "/tmp/test.sock",
@@ -131,7 +133,9 @@ func TestOriginTransportUsesProxyFromEnvironmentOnly(t *testing.T) {
 
 func TestNewDirectOriginTransportNoHappyEyeballs(t *testing.T) {
 	t.Parallel()
-	serviceInstance := &Service{}
+	serviceInstance := &Service{
+		directTransports: make(map[string]*http.Transport),
+	}
 	transport, cleanup, err := serviceInstance.newDirectOriginTransport(ResolvedService{
 		Kind:     ResolvedServiceUnix,
 		UnixPath: "/tmp/test.sock",

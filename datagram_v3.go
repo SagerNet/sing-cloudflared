@@ -3,7 +3,6 @@ package cloudflared
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"net/netip"
 	"os"
 	"sync"
@@ -18,7 +17,6 @@ import (
 
 // V3 wire format: [1B type | payload] (prefix-based)
 
-// DatagramV3Type identifies the type of a V3 datagram.
 type DatagramV3Type byte
 
 const (
@@ -52,7 +50,6 @@ const (
 	v3ResponseErrorWithMsg           byte = 0xFF
 )
 
-// RequestID is a 128-bit session identifier for V3.
 type RequestID [v3RequestIDLength]byte
 
 type v3RegistrationState uint8
@@ -74,7 +71,6 @@ func NewDatagramV3SessionManager() *DatagramV3SessionManager {
 	}
 }
 
-// DatagramV3Muxer handles V3 datagram demuxing and session management.
 type DatagramV3Muxer struct {
 	service *Service
 	logger  logger.ContextLogger
@@ -82,7 +78,6 @@ type DatagramV3Muxer struct {
 	icmp    *ICMPBridge
 }
 
-// NewDatagramV3Muxer creates a new V3 datagram muxer.
 func NewDatagramV3Muxer(service *Service, sender DatagramSender, log logger.ContextLogger) *DatagramV3Muxer {
 	return &DatagramV3Muxer{
 		service: service,
@@ -92,7 +87,6 @@ func NewDatagramV3Muxer(service *Service, sender DatagramSender, log logger.Cont
 	}
 }
 
-// HandleDatagram demuxes an incoming V3 datagram.
 func (m *DatagramV3Muxer) HandleDatagram(ctx context.Context, data []byte) {
 	if len(data) < 1 {
 		return
@@ -219,10 +213,8 @@ func (m *DatagramV3Muxer) sendPayload(requestID RequestID, payload []byte) {
 	m.sender.SendDatagram(data)
 }
 
-// Close closes all V3 sessions.
 func (m *DatagramV3Muxer) Close() {}
 
-// v3Session represents a V3 UDP session.
 type v3Session struct {
 	id             RequestID
 	destination    netip.AddrPort
@@ -282,6 +274,10 @@ func (m *DatagramV3SessionManager) Register(
 		return nil, 0, err
 	}
 
+	sessionCtx := ctx
+	if sessionCtx == nil {
+		sessionCtx = context.Background()
+	}
 	session := &v3Session{
 		id:             requestID,
 		destination:    destination,
@@ -293,17 +289,12 @@ func (m *DatagramV3SessionManager) Register(
 		closeChan:      make(chan struct{}),
 		activeAt:       time.Now(),
 		sender:         sender,
-		connCtx:        ctx,
+		connCtx:        sessionCtx,
 		contextChan:    make(chan context.Context, 1),
 	}
 	m.sessions[requestID] = session
 	m.sessionAccess.Unlock()
 
-	sessionCtx := ctx
-	if sessionCtx == nil {
-		sessionCtx = context.Background()
-	}
-	session.connCtx = sessionCtx
 	go session.serve(sessionCtx, limit)
 	return session, v3RegistrationNew, nil
 }
@@ -392,7 +383,7 @@ func (s *v3Session) writeLoop() {
 		case payload := <-s.writeChan:
 			err := s.origin.WritePacket(buf.As(payload), M.SocksaddrFromNetIP(s.destination))
 			if err != nil {
-				if errors.Is(err, os.ErrDeadlineExceeded) {
+				if E.IsMulti(err, os.ErrDeadlineExceeded) {
 					s.service.logger.Debug("drop V3 UDP payload due to write deadline exceeded")
 					continue
 				}

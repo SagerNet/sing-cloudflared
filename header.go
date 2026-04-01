@@ -19,7 +19,6 @@ const (
 
 var headerEncoding = base64.RawStdEncoding
 
-// SerializeHeaders encodes HTTP/1 headers into base64 pairs: base64(name):base64(value);...
 func SerializeHeaders(header http.Header) string {
 	var builder strings.Builder
 	for name, values := range header {
@@ -37,17 +36,15 @@ func SerializeHeaders(header http.Header) string {
 
 // isControlResponseHeader returns true for headers that are internal control headers.
 func isControlResponseHeader(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasPrefix(lower, ":") ||
-		strings.HasPrefix(lower, "cf-int-") ||
-		strings.HasPrefix(lower, "cf-cloudflared-") ||
-		strings.HasPrefix(lower, "cf-proxy-")
+	return strings.HasPrefix(name, ":") ||
+		strings.HasPrefix(name, "cf-int-") ||
+		strings.HasPrefix(name, "cf-cloudflared-") ||
+		strings.HasPrefix(name, "cf-proxy-")
 }
 
 // isWebsocketClientHeader returns true for headers needed by the client for WebSocket upgrade.
 func isWebsocketClientHeader(name string) bool {
-	lower := strings.ToLower(name)
-	return lower == "sec-websocket-accept" ||
-		lower == "connection" ||
-		lower == "upgrade"
+	return name == "sec-websocket-accept" ||
+		name == "connection" ||
+		name == "upgrade"
 }

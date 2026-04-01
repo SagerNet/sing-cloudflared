@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -73,9 +72,9 @@ func accessTokenAudienceAllowed(tokenAudience []string, configuredAudTags []stri
 
 func accessIssuerURL(teamName string, environment string) string {
 	if strings.EqualFold(environment, "fed") || strings.EqualFold(environment, "fips") {
-		return fmt.Sprintf("https://%s.fed.cloudflareaccess.com", teamName)
+		return "https://" + teamName + ".fed.cloudflareaccess.com"
 	}
-	return fmt.Sprintf("https://%s.cloudflareaccess.com", teamName)
+	return "https://" + teamName + ".cloudflareaccess.com"
 }
 
 func validateAccessConfiguration(access AccessConfig) error {
@@ -112,6 +111,10 @@ func (c *accessValidatorCache) Get(accessConfig AccessConfig) (accessValidator, 
 		return nil, err
 	}
 	c.access.Lock()
+	if existing, loaded := c.values[key]; loaded {
+		c.access.Unlock()
+		return existing, nil
+	}
 	c.values[key] = validator
 	c.access.Unlock()
 	return validator, nil
