@@ -19,3 +19,6 @@ lint_install:
 
 test:
 	go test ./...
+
+update_cloudflare_ca:
+	go run ./cmd/internal/update_cloudflare_ca
