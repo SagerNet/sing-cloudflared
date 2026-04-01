@@ -26,6 +26,10 @@ var (
 	lookupEdgeSRVWithDoTFn = lookupEdgeSRVWithDoT
 	edgeLookupSRV          = net.LookupSRV
 	edgeLookupIP           = net.LookupIP
+	edgeDoTDestination     = M.ParseSocksaddr(dotServerAddr)
+	edgeDoTTLSClient       = func(conn net.Conn) net.Conn {
+		return tls.Client(conn, &tls.Config{ServerName: dotServerName})
+	}
 )
 
 func getRegionalServiceName(region string) string {
@@ -67,11 +71,11 @@ func lookupEdgeSRVWithDoT(ctx context.Context, region string, controlDialer N.Di
 	resolver := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			conn, err := controlDialer.DialContext(ctx, "tcp", M.ParseSocksaddr(dotServerAddr))
+			conn, err := controlDialer.DialContext(ctx, "tcp", edgeDoTDestination)
 			if err != nil {
 				return nil, err
 			}
-			return tls.Client(conn, &tls.Config{ServerName: dotServerName}), nil
+			return edgeDoTTLSClient(conn), nil
 		},
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, dotTimeout)
