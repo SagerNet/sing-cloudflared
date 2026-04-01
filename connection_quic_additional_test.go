@@ -350,3 +350,23 @@ func TestQUICHelpers(t *testing.T) {
 		t.Fatalf("unexpected createUDPConnForConnIndex error %v", err)
 	}
 }
+
+func TestQUICDatagramSenderHelpers(t *testing.T) {
+	t.Parallel()
+
+	conn := newScriptedQUICConn()
+	connection := &QUICConnection{
+		conn:            conn,
+		datagramVersion: datagramVersionV3,
+	}
+
+	if err := connection.SendDatagram([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if len(conn.sent) != 1 || string(conn.sent[0]) != "payload" {
+		t.Fatalf("unexpected sent datagrams %#v", conn.sent)
+	}
+	if got := connection.DatagramVersion(); got != datagramVersionV3 {
+		t.Fatalf("unexpected datagram version %q", got)
+	}
+}

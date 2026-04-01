@@ -22,6 +22,8 @@ var cloudflareRootCertPoolValue = sync.OnceValues(func() (*x509.CertPool, error)
 	return pool, nil
 })
 
+var loadCloudflareRootCertPool = cloudflareRootCertPool
+
 func cloudflareRootCertPool() (*x509.CertPool, error) {
 	return cloudflareRootCertPoolValue()
 }

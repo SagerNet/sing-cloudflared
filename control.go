@@ -214,7 +214,7 @@ var (
 
 func DefaultFeatures(datagramVersion string) []string {
 	if datagramVersion == datagramVersionV3 {
-		return defaultFeaturesV3
+		return append([]string(nil), defaultFeaturesV3...)
 	}
-	return defaultFeaturesV2
+	return append([]string(nil), defaultFeaturesV2...)
 }

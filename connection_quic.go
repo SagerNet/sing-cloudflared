@@ -107,7 +107,7 @@ func NewQUICConnection(
 	onConnected func(),
 	log logger.ContextLogger,
 ) (*QUICConnection, error) {
-	rootCAs, err := cloudflareRootCertPool()
+	rootCAs, err := loadCloudflareRootCertPool()
 	if err != nil {
 		return nil, E.Cause(err, "load Cloudflare root CAs")
 	}

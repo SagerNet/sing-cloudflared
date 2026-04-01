@@ -21,6 +21,13 @@ const (
 	dotTimeout    = 15 * time.Second
 )
 
+var (
+	lookupEdgeSRVFn        = lookupEdgeSRV
+	lookupEdgeSRVWithDoTFn = lookupEdgeSRVWithDoT
+	edgeLookupSRV          = net.LookupSRV
+	edgeLookupIP           = net.LookupIP
+)
+
 func getRegionalServiceName(region string) string {
 	if region == "" {
 		return edgeSRVService
@@ -35,9 +42,9 @@ type EdgeAddr struct {
 }
 
 func DiscoverEdge(ctx context.Context, region string, controlDialer N.Dialer) ([][]*EdgeAddr, error) {
-	regions, err := lookupEdgeSRV(region)
+	regions, err := lookupEdgeSRVFn(region)
 	if err != nil {
-		regions, err = lookupEdgeSRVWithDoT(ctx, region, controlDialer)
+		regions, err = lookupEdgeSRVWithDoTFn(ctx, region, controlDialer)
 		if err != nil {
 			return nil, E.Cause(err, "edge discovery")
 		}
@@ -49,7 +56,7 @@ func DiscoverEdge(ctx context.Context, region string, controlDialer N.Dialer) ([
 }
 
 func lookupEdgeSRV(region string) ([][]*EdgeAddr, error) {
-	_, addrs, err := net.LookupSRV(getRegionalServiceName(region), edgeSRVProto, edgeSRVName)
+	_, addrs, err := edgeLookupSRV(getRegionalServiceName(region), edgeSRVProto, edgeSRVName)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +86,7 @@ func lookupEdgeSRVWithDoT(ctx context.Context, region string, controlDialer N.Di
 func resolveSRVRecords(records []*net.SRV) ([][]*EdgeAddr, error) {
 	var regions [][]*EdgeAddr
 	for _, record := range records {
-		ips, err := net.LookupIP(record.Target)
+		ips, err := edgeLookupIP(record.Target)
 		if err != nil {
 			return nil, E.Cause(err, "resolve SRV target: ", record.Target)
 		}

@@ -73,7 +73,7 @@ func NewHTTP2Connection(
 	service *Service,
 	log logger.ContextLogger,
 ) (*HTTP2Connection, error) {
-	rootCAs, err := cloudflareRootCertPool()
+	rootCAs, err := loadCloudflareRootCertPool()
 	if err != nil {
 		return nil, E.Cause(err, "load Cloudflare root CAs")
 	}
