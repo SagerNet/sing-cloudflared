@@ -188,9 +188,6 @@ func TestHandleControlStreamRegistersAndNotifies(t *testing.T) {
 	if writer.statusCode != http.StatusOK || writer.flushes != 1 {
 		t.Fatalf("unexpected control stream response status=%d flushes=%d", writer.statusCode, writer.flushes)
 	}
-	if connection.registrationResult == nil || connection.registrationResult.Location != "NRT" {
-		t.Fatalf("unexpected registration result %#v", connection.registrationResult)
-	}
 	if registrationClient.connIndex != 0 || registrationClient.tunnelID != serviceInstance.credentials.TunnelID {
 		t.Fatalf("unexpected registration inputs conn=%d tunnel=%s", registrationClient.connIndex, registrationClient.tunnelID)
 	}
@@ -205,6 +202,9 @@ func TestHandleControlStreamRegistersAndNotifies(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected connected notification")
+	}
+	if connection.registrationResult == nil || connection.registrationResult.Location != "NRT" {
+		t.Fatalf("unexpected registration result %#v", connection.registrationResult)
 	}
 
 	cancel()
