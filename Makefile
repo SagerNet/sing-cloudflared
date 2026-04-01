@@ -4,7 +4,7 @@ fmt:
 	@gci write --custom-order -s standard -s "prefix(github.com/sagernet/)" -s "default" .
 
 fmt_install:
-	go install -v mvdan.cc/gofumpt@v0.8.0
+	go install -v mvdan.cc/gofumpt@latest
 	go install -v github.com/daixiang0/gci@latest
 
 lint:
