@@ -1,3 +1,5 @@
+//go:build !windows
+
 package cloudflared
 
 import (
@@ -9,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -20,9 +21,6 @@ func unixSocketPathForTest(t *testing.T) string {
 	t.Helper()
 
 	path := filepath.Join(os.TempDir(), "cf-direct-origin-"+time.Now().Format("150405.000000000")+".sock")
-	if runtime.GOOS == "windows" {
-		path = filepath.Join(t.TempDir(), "cf-direct-origin.sock")
-	}
 	_ = os.Remove(path)
 	t.Cleanup(func() { _ = os.Remove(path) })
 	return path
