@@ -368,3 +368,48 @@ func TestNewQUICConnectionSuccess(t *testing.T) {
 	_ = connection.Close()
 	close(shutdown)
 }
+
+func TestNewQUICConnectionAppliesPostQuantumCurvePreferences(t *testing.T) {
+	originalLoader := loadCloudflareRootCertPool
+	originalDialQUIC := dialQUIC
+	defer func() {
+		loadCloudflareRootCertPool = originalLoader
+		dialQUIC = originalDialQUIC
+	}()
+
+	loadCloudflareRootCertPool = func() (*x509.CertPool, error) {
+		return x509.NewCertPool(), nil
+	}
+
+	var capturedCurves []tls.CurveID
+	dialQUIC = func(ctx context.Context, udpConn *net.UDPConn, addr *net.UDPAddr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+		capturedCurves = append([]tls.CurveID(nil), tlsConfig.CurvePreferences...)
+		_ = udpConn.Close()
+		return nil, errors.New("dial failed")
+	}
+
+	_, err := NewQUICConnection(
+		context.Background(),
+		&EdgeAddr{UDP: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7844}, IPVersion: 4},
+		0,
+		Credentials{TunnelID: uuid.New()},
+		uuid.New(),
+		defaultDatagramVersion,
+		[]string{featurePostQuantum},
+		0,
+		time.Second,
+		&constructorDialer{
+			listenPacket: func(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+				return net.ListenPacket("udp", "127.0.0.1:0")
+			},
+		},
+		nil,
+		nil,
+	)
+	if err == nil || err.Error()[:15] != "dial QUIC edge:" {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if len(capturedCurves) != 1 || capturedCurves[0] != x25519MLKEM768PQKex {
+		t.Fatalf("unexpected captured post-quantum curves %#v", capturedCurves)
+	}
+}

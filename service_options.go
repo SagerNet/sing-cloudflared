@@ -16,6 +16,7 @@ type ServiceOptions struct {
 	Token           string
 	HAConnections   int
 	Protocol        string
+	PostQuantum     bool
 	ControlDialer   N.Dialer
 	TunnelDialer    N.Dialer
 	EdgeIPVersion   int

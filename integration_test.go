@@ -27,6 +27,42 @@ func startLiveTestService(t *testing.T, env *liveTestEnvironment, protocol strin
 	return serviceInstance
 }
 
+func startLiveConfiguredService(t *testing.T, env *liveTestEnvironment, options ServiceOptions) *Service {
+	t.Helper()
+
+	if options.Token == "" {
+		options.Token = env.token
+	}
+	if options.Handler == nil {
+		options.Handler = &testHandler{}
+	}
+	serviceInstance, err := NewService(options)
+	if err != nil {
+		t.Fatal("NewService: ", err)
+	}
+	t.Cleanup(func() {
+		_ = serviceInstance.Close()
+	})
+
+	if err := serviceInstance.Start(); err != nil {
+		t.Fatal("Start: ", err)
+	}
+
+	waitForTunnel(t, env.baseURL, 2*time.Minute)
+	return serviceInstance
+}
+
+func requireFirstTrackedConnection(t *testing.T, serviceInstance *Service) io.Closer {
+	t.Helper()
+
+	serviceInstance.connectionAccess.Lock()
+	defer serviceInstance.connectionAccess.Unlock()
+	if len(serviceInstance.connections) == 0 {
+		t.Fatal("expected at least one tracked connection")
+	}
+	return serviceInstance.connections[0]
+}
+
 func TestLiveQUICIntegration(t *testing.T) {
 	env := requireLiveTestEnvironment(t)
 	startLiveTestService(t, env, "quic", 1)
@@ -59,6 +95,53 @@ func TestLiveHTTP2Integration(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("expected 200, got ", resp.StatusCode)
+	}
+}
+
+func TestLiveAutoProtocolIntegration(t *testing.T) {
+	env := requireLiveTestEnvironment(t)
+	serviceInstance := startLiveConfiguredService(t, env, ServiceOptions{
+		Protocol:      "auto",
+		HAConnections: 1,
+	})
+
+	if _, ok := requireFirstTrackedConnection(t, serviceInstance).(*QUICConnection); !ok {
+		t.Fatalf("expected auto protocol to establish QUIC connection, got %T", requireFirstTrackedConnection(t, serviceInstance))
+	}
+
+	resp, err := http.Get(env.HTTPURL("/ping"))
+	if err != nil {
+		t.Fatal("GET /ping: ", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("expected 200, got ", resp.StatusCode)
+	}
+}
+
+func TestLivePostQuantumIntegration(t *testing.T) {
+	env := requireLiveTestEnvironment(t)
+	serviceInstance := startLiveConfiguredService(t, env, ServiceOptions{
+		Protocol:      "auto",
+		PostQuantum:   true,
+		HAConnections: 1,
+	})
+
+	if _, ok := requireFirstTrackedConnection(t, serviceInstance).(*QUICConnection); !ok {
+		t.Fatalf("expected post-quantum mode to use QUIC, got %T", requireFirstTrackedConnection(t, serviceInstance))
+	}
+	_, features := serviceInstance.currentConnectionFeatures()
+	if !strings.Contains(strings.Join(features, ","), featurePostQuantum) {
+		t.Fatalf("expected post-quantum feature in %v", features)
+	}
+
+	resp, err := http.Get(env.HTTPURL("/ping"))
+	if err != nil {
+		t.Fatal("GET /ping: ", err)
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatal("expected 200, got ", resp.StatusCode)
 	}

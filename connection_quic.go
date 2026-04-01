@@ -2,6 +2,7 @@ package cloudflared
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"sync"
@@ -25,6 +26,10 @@ const (
 	quicMaxIdleTimeout       = 5 * time.Second
 	quicKeepAlivePeriod      = 1 * time.Second
 )
+
+var dialQUIC = func(ctx context.Context, udpConn *net.UDPConn, addr *net.UDPAddr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	return quic.Dial(ctx, udpConn, addr, tlsConfig, quicConfig)
+}
 
 func quicInitialPacketSize(ipVersion int) uint16 {
 	initialPacketSize := uint16(1252)
@@ -113,6 +118,7 @@ func NewQUICConnection(
 	}
 
 	tlsConfig := newEdgeTLSConfig(rootCAs, quicEdgeSNI, []string{quicEdgeALPN})
+	applyPostQuantumCurvePreferences(tlsConfig, features)
 
 	quicConfig := &quic.Config{
 		HandshakeIdleTimeout:  quicHandshakeIdleTimeout,
@@ -129,7 +135,7 @@ func NewQUICConnection(
 		return nil, E.Cause(err, "listen UDP for QUIC edge")
 	}
 
-	conn, err := quic.Dial(ctx, udpConn, edgeAddr.UDP, tlsConfig, quicConfig)
+	conn, err := dialQUIC(ctx, udpConn, edgeAddr.UDP, tlsConfig, quicConfig)
 	if err != nil {
 		udpConn.Close()
 		return nil, E.Cause(err, "dial QUIC edge")

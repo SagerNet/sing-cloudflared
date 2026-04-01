@@ -37,15 +37,14 @@ func newLimitedService(t *testing.T, limit uint64) *Service {
 	config.WarpRouting.MaxActiveFlows = limit
 	configManager.activeConfig = config
 	return &Service{
-		ctx:                 ctx,
-		cancel:              cancel,
-		logger:              logger.NOP(),
-		configManager:       configManager,
-		flowLimiter:         &FlowLimiter{},
-		datagramV3Manager:   NewDatagramV3SessionManager(),
-		connectionStates:    make([]connectionState, 1),
-		successfulProtocols: make(map[string]struct{}),
-		directTransports:    make(map[string]*http.Transport),
+		ctx:               ctx,
+		cancel:            cancel,
+		logger:            logger.NOP(),
+		configManager:     configManager,
+		flowLimiter:       &FlowLimiter{},
+		datagramV3Manager: NewDatagramV3SessionManager(),
+		connectionStates:  make([]connectionState, 1),
+		directTransports:  make(map[string]*http.Transport),
 	}
 }
 

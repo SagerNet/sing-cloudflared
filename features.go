@@ -15,6 +15,7 @@ const (
 	featureLookupTimeout          = 10 * time.Second
 	defaultDatagramVersion        = "v2"
 	datagramVersionV3             = "v3"
+	featurePostQuantum            = "postquantum"
 	protocolQUIC                  = "quic"
 	protocolHTTP2                 = "http2"
 	defaultFeatureRefreshInterval = time.Hour

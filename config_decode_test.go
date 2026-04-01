@@ -35,6 +35,50 @@ func TestNormalizeProtocolAutoUsesTokenStyleSentinel(t *testing.T) {
 	}
 }
 
+func TestNormalizeProtocolH2MUXUsesHTTP2(t *testing.T) {
+	t.Parallel()
+
+	protocol, err := normalizeProtocol(protocolH2MUX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protocol != protocolHTTP2 {
+		t.Fatalf("expected h2mux to normalize to http2, got %q", protocol)
+	}
+}
+
+func TestNewServiceRejectsPostQuantumWithHTTP2(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewService(ServiceOptions{
+		Token:       testToken(t),
+		Protocol:    protocolHTTP2,
+		PostQuantum: true,
+	})
+	if err == nil || err.Error() != "post-quantum is only supported with quic transport" {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func TestNewServiceAutoPostQuantumUsesQUICOnlySelector(t *testing.T) {
+	t.Parallel()
+
+	service, err := NewService(ServiceOptions{
+		Token:       testToken(t),
+		Protocol:    "auto",
+		PostQuantum: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.currentProtocol() != protocolQUIC {
+		t.Fatalf("unexpected current protocol %q", service.currentProtocol())
+	}
+	if fallback, ok := service.fallbackProtocol(); ok {
+		t.Fatalf("expected no fallback for post-quantum selector, got %q", fallback)
+	}
+}
+
 func TestExplicitZeroGracePeriod(t *testing.T) {
 	t.Parallel()
 	service, err := NewService(ServiceOptions{

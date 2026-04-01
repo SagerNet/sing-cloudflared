@@ -120,3 +120,20 @@ func TestServiceUsesFreshFeatureSnapshotOnRetry(t *testing.T) {
 		t.Fatalf("expected v3 feature list, got %#v", features)
 	}
 }
+
+func TestServiceCurrentConnectionFeaturesAddsPostQuantum(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := &Service{
+		postQuantum: true,
+		featureSelector: &featureSelector{
+			accountTag:             "account",
+			currentDatagramVersion: defaultDatagramVersion,
+		},
+	}
+
+	_, features := serviceInstance.currentConnectionFeatures()
+	if !slices.Contains(features, featurePostQuantum) {
+		t.Fatalf("expected post-quantum feature, got %#v", features)
+	}
+}

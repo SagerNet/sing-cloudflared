@@ -3,11 +3,13 @@ package cloudflared
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
 
@@ -33,92 +35,63 @@ func restoreConnectionHooks(t *testing.T) {
 	})
 }
 
-func TestServeConnectionAutoFallbackSticky(t *testing.T) {
+func TestRecordConnectionFailureAutoFallbackAfterRetryBudget(t *testing.T) {
 	t.Parallel()
-	restoreConnectionHooks(t)
 
 	serviceInstance := newLimitedService(t, 0)
 	serviceInstance.protocol = ""
 	serviceInstance.initializeConnectionState(0)
 
-	var quicCalls, http2Calls int
-	newQUICConnection = func(context.Context, *EdgeAddr, uint8, Credentials, uuid.UUID, string, []string, uint8, time.Duration, N.Dialer, func(), logger.ContextLogger) (*QUICConnection, error) {
-		quicCalls++
-		return &QUICConnection{}, nil
-	}
-	serveQUICConnection = func(*QUICConnection, context.Context, StreamHandler) error {
-		return errors.New("quic failed")
-	}
-	newHTTP2Connection = func(context.Context, *EdgeAddr, uint8, Credentials, uuid.UUID, []string, uint8, time.Duration, *Service, logger.ContextLogger) (*HTTP2Connection, error) {
-		http2Calls++
-		return &HTTP2Connection{}, nil
-	}
-	serveHTTP2Connection = func(*HTTP2Connection, context.Context) error {
-		return errors.New("http2 failed")
+	for retry := uint8(1); retry < defaultProtocolRetry; retry++ {
+		count, switchedProtocol, switched := serviceInstance.recordConnectionFailure(0, fmt.Errorf("quic failed %d", retry))
+		if switched {
+			t.Fatalf("unexpected early fallback to %q at retry %d", switchedProtocol, retry)
+		}
+		if count != retry {
+			t.Fatalf("unexpected retry count %d at step %d", count, retry)
+		}
+		if state := serviceInstance.connectionState(0); state.protocol != protocolQUIC || state.retries != retry {
+			t.Fatalf("unexpected state before fallback %#v", state)
+		}
 	}
 
-	if err := serviceInstance.serveConnection(0, &EdgeAddr{}); err == nil || err.Error() != "http2 failed" {
-		t.Fatalf("expected HTTP/2 fallback error, got %v", err)
+	count, switchedProtocol, switched := serviceInstance.recordConnectionFailure(0, errors.New("quic failed"))
+	if !switched || switchedProtocol != protocolHTTP2 {
+		t.Fatalf("expected fallback to HTTP/2, got switched=%v protocol=%q", switched, switchedProtocol)
 	}
-	if state := serviceInstance.connectionState(0); state.protocol != "http2" {
-		t.Fatalf("expected sticky HTTP/2 fallback, got %#v", state)
+	if count != defaultProtocolRetry {
+		t.Fatalf("unexpected retry count at fallback %d", count)
 	}
-
-	if err := serviceInstance.serveConnection(0, &EdgeAddr{}); err == nil || err.Error() != "http2 failed" {
-		t.Fatalf("expected second HTTP/2 error, got %v", err)
-	}
-	if quicCalls != 1 {
-		t.Fatalf("expected QUIC to be attempted once, got %d", quicCalls)
-	}
-	if http2Calls != 2 {
-		t.Fatalf("expected HTTP/2 to be attempted twice, got %d", http2Calls)
+	if state := serviceInstance.connectionState(0); state.protocol != protocolHTTP2 || state.retries != 0 {
+		t.Fatalf("unexpected state after fallback %#v", state)
 	}
 }
 
-func TestSecondConnectionInitialProtocolUsesFirstSuccess(t *testing.T) {
+func TestRecordConnectionFailureFallsBackOnBrokenQUIC(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.protocol = ""
+	serviceInstance.initializeConnectionState(0)
+
+	count, switchedProtocol, switched := serviceInstance.recordConnectionFailure(0, &quic.IdleTimeoutError{})
+	if !switched || switchedProtocol != protocolHTTP2 {
+		t.Fatalf("expected immediate fallback on broken QUIC, got switched=%v protocol=%q", switched, switchedProtocol)
+	}
+	if count != 1 {
+		t.Fatalf("unexpected retry count for broken QUIC fallback %d", count)
+	}
+}
+
+func TestSecondConnectionInitialProtocolUsesSelectorCurrent(t *testing.T) {
 	t.Parallel()
 	serviceInstance := newLimitedService(t, 0)
 	serviceInstance.protocol = ""
-
 	serviceInstance.notifyConnected(0, "http2")
 	serviceInstance.initializeConnectionState(1)
 
-	if state := serviceInstance.connectionState(1); state.protocol != "http2" {
-		t.Fatalf("expected second connection to inherit HTTP/2, got %#v", state)
-	}
-}
-
-func TestServeConnectionSkipsFallbackWhenQUICAlreadySucceeded(t *testing.T) {
-	t.Parallel()
-	restoreConnectionHooks(t)
-
-	serviceInstance := newLimitedService(t, 0)
-	serviceInstance.protocol = ""
-	serviceInstance.notifyConnected(0, "quic")
-	serviceInstance.initializeConnectionState(1)
-
-	var http2Calls int
-	quicErr := errors.New("quic failed")
-	newQUICConnection = func(context.Context, *EdgeAddr, uint8, Credentials, uuid.UUID, string, []string, uint8, time.Duration, N.Dialer, func(), logger.ContextLogger) (*QUICConnection, error) {
-		return &QUICConnection{}, nil
-	}
-	serveQUICConnection = func(*QUICConnection, context.Context, StreamHandler) error {
-		return quicErr
-	}
-	newHTTP2Connection = func(context.Context, *EdgeAddr, uint8, Credentials, uuid.UUID, []string, uint8, time.Duration, *Service, logger.ContextLogger) (*HTTP2Connection, error) {
-		http2Calls++
-		return &HTTP2Connection{}, nil
-	}
-
-	err := serviceInstance.serveConnection(1, &EdgeAddr{})
-	if !errors.Is(err, quicErr) {
-		t.Fatalf("expected QUIC error without fallback, got %v", err)
-	}
-	if http2Calls != 0 {
-		t.Fatalf("expected no HTTP/2 fallback, got %d calls", http2Calls)
-	}
-	if state := serviceInstance.connectionState(1); state.protocol != "quic" {
-		t.Fatalf("expected connection to remain on QUIC, got %#v", state)
+	if state := serviceInstance.connectionState(1); state.protocol != protocolQUIC {
+		t.Fatalf("expected second connection to start from selector current protocol, got %#v", state)
 	}
 }
 
@@ -136,8 +109,27 @@ func TestNotifyConnectedResetsRetries(t *testing.T) {
 	if state.retries != 0 {
 		t.Fatalf("expected retries reset after success, got %d", state.retries)
 	}
-	if state.protocol != "http2" {
-		t.Fatalf("expected protocol to be pinned to success, got %q", state.protocol)
+	if state.protocol != protocolQUIC {
+		t.Fatalf("expected protocol to return to selector current value, got %q", state.protocol)
+	}
+}
+
+func TestRecordConnectionFailureExplicitQUICHasNoFallback(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.protocol = protocolQUIC
+	serviceInstance.initializeConnectionState(0)
+
+	for range defaultProtocolRetry + 2 {
+		_, switchedProtocol, switched := serviceInstance.recordConnectionFailure(0, errors.New("quic failed"))
+		if switched {
+			t.Fatalf("unexpected fallback to %q for explicit QUIC transport", switchedProtocol)
+		}
+	}
+
+	if state := serviceInstance.connectionState(0); state.protocol != protocolQUIC || state.retries != defaultProtocolRetry {
+		t.Fatalf("unexpected explicit QUIC state %#v", state)
 	}
 }
 

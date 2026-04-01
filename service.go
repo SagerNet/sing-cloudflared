@@ -33,27 +33,29 @@ var (
 )
 
 type Service struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	logger          logger.ContextLogger
-	handler         Handler
-	icmpHandler     ICMPHandler
-	newContext      func(context.Context) context.Context
-	clientVersion   string
-	credentials     Credentials
-	connectorID     uuid.UUID
-	haConnections   int
-	protocol        string
-	region          string
-	edgeIPVersion   int
-	datagramVersion string
-	featureSelector *featureSelector
-	gracePeriod     time.Duration
-	configManager   *ConfigManager
-	flowLimiter     *FlowLimiter
-	accessCache     *accessValidatorCache
-	controlDialer   N.Dialer
-	tunnelDialer    N.Dialer
+	ctx              context.Context
+	cancel           context.CancelFunc
+	logger           logger.ContextLogger
+	handler          Handler
+	icmpHandler      ICMPHandler
+	newContext       func(context.Context) context.Context
+	clientVersion    string
+	credentials      Credentials
+	connectorID      uuid.UUID
+	haConnections    int
+	protocol         string
+	postQuantum      bool
+	protocolSelector protocolSelector
+	region           string
+	edgeIPVersion    int
+	datagramVersion  string
+	featureSelector  *featureSelector
+	gracePeriod      time.Duration
+	configManager    *ConfigManager
+	flowLimiter      *FlowLimiter
+	accessCache      *accessValidatorCache
+	controlDialer    N.Dialer
+	tunnelDialer     N.Dialer
 
 	connectionAccess sync.Mutex
 	connections      []io.Closer
@@ -68,10 +70,8 @@ type Service struct {
 	connectedIndices map[uint8]struct{}
 	connectedNotify  chan uint8
 
-	stateAccess             sync.Mutex
-	connectionStates        []connectionState
-	successfulProtocols     map[string]struct{}
-	firstSuccessfulProtocol string
+	stateAccess      sync.Mutex
+	connectionStates []connectionState
 
 	directTransportAccess sync.Mutex
 	directTransports      map[string]*http.Transport
@@ -109,9 +109,21 @@ func NewService(options ServiceOptions) (*Service, error) {
 		haConnections = 4
 	}
 
+	serviceLogger := options.Logger
+	if serviceLogger == nil {
+		serviceLogger = logger.NOP()
+	}
+
 	protocol, err := normalizeProtocol(options.Protocol)
 	if err != nil {
 		return nil, err
+	}
+	selector, err := newProtocolSelector(protocol, options.PostQuantum)
+	if err != nil {
+		return nil, err
+	}
+	if options.Protocol == protocolH2MUX {
+		serviceLogger.Warn("h2mux is no longer supported, using HTTP/2 instead")
 	}
 
 	edgeIPVersion := options.EdgeIPVersion
@@ -143,11 +155,6 @@ func NewService(options ServiceOptions) (*Service, error) {
 		tunnelDialer = N.SystemDialer
 	}
 
-	serviceLogger := options.Logger
-	if serviceLogger == nil {
-		serviceLogger = logger.NOP()
-	}
-
 	region := options.Region
 	if region != "" && credentials.Endpoint != "" {
 		return nil, E.New("region cannot be specified when credentials already include an endpoint")
@@ -169,35 +176,36 @@ func NewService(options ServiceOptions) (*Service, error) {
 	serviceCtx, cancel := context.WithCancel(context.Background())
 
 	return &Service{
-		ctx:                 serviceCtx,
-		cancel:              cancel,
-		logger:              serviceLogger,
-		handler:             options.Handler,
-		icmpHandler:         options.ICMPHandler,
-		newContext:          newContextFn,
-		clientVersion:       clientVersion,
-		credentials:         credentials,
-		connectorID:         uuid.New(),
-		haConnections:       haConnections,
-		protocol:            protocol,
-		region:              region,
-		edgeIPVersion:       edgeIPVersion,
-		datagramVersion:     datagramVersion,
-		featureSelector:     newFeatureSelector(serviceCtx, credentials.AccountTag, datagramVersion),
-		gracePeriod:         gracePeriod,
-		configManager:       configManager,
-		flowLimiter:         &FlowLimiter{},
-		accessCache:         &accessValidatorCache{values: make(map[string]accessValidator), dialer: controlDialer},
-		controlDialer:       controlDialer,
-		tunnelDialer:        tunnelDialer,
-		datagramV2Muxers:    make(map[DatagramSender]*DatagramV2Muxer),
-		datagramV3Muxers:    make(map[DatagramSender]*DatagramV3Muxer),
-		datagramV3Manager:   NewDatagramV3SessionManager(),
-		connectedIndices:    make(map[uint8]struct{}),
-		connectedNotify:     make(chan uint8, haConnections),
-		connectionStates:    make([]connectionState, haConnections),
-		successfulProtocols: make(map[string]struct{}),
-		directTransports:    make(map[string]*http.Transport),
+		ctx:               serviceCtx,
+		cancel:            cancel,
+		logger:            serviceLogger,
+		handler:           options.Handler,
+		icmpHandler:       options.ICMPHandler,
+		newContext:        newContextFn,
+		clientVersion:     clientVersion,
+		credentials:       credentials,
+		connectorID:       uuid.New(),
+		haConnections:     haConnections,
+		protocol:          protocol,
+		postQuantum:       options.PostQuantum,
+		protocolSelector:  selector,
+		region:            region,
+		edgeIPVersion:     edgeIPVersion,
+		datagramVersion:   datagramVersion,
+		featureSelector:   newFeatureSelector(serviceCtx, credentials.AccountTag, datagramVersion),
+		gracePeriod:       gracePeriod,
+		configManager:     configManager,
+		flowLimiter:       &FlowLimiter{},
+		accessCache:       &accessValidatorCache{values: make(map[string]accessValidator), dialer: controlDialer},
+		controlDialer:     controlDialer,
+		tunnelDialer:      tunnelDialer,
+		datagramV2Muxers:  make(map[DatagramSender]*DatagramV2Muxer),
+		datagramV3Muxers:  make(map[DatagramSender]*DatagramV3Muxer),
+		datagramV3Manager: NewDatagramV3SessionManager(),
+		connectedIndices:  make(map[uint8]struct{}),
+		connectedNotify:   make(chan uint8, haConnections),
+		connectionStates:  make([]connectionState, haConnections),
+		directTransports:  make(map[string]*http.Transport),
 	}, nil
 }
 
@@ -238,19 +246,13 @@ func (s *Service) Start() error {
 	return nil
 }
 
-func (s *Service) notifyConnected(connIndex uint8, protocol string) {
+func (s *Service) notifyConnected(connIndex uint8, _ string) {
 	s.stateAccess.Lock()
 	s.ensureConnectionStateLocked(connIndex)
 	state := s.connectionStates[connIndex]
 	state.retries = 0
-	state.protocol = protocol
+	state.protocol = s.currentProtocol()
 	s.connectionStates[connIndex] = state
-	if protocol != "" {
-		s.successfulProtocols[protocol] = struct{}{}
-		if s.firstSuccessfulProtocol == "" {
-			s.firstSuccessfulProtocol = protocol
-		}
-	}
 	s.stateAccess.Unlock()
 
 	if s.connectedNotify == nil {
@@ -327,12 +329,15 @@ func (s *Service) superviseConnection(connIndex uint8, edgeAddrs []*EdgeAddr) {
 			return
 		}
 
-		retries := s.incrementConnectionRetries(connIndex)
+		retries, switchedProtocol, switched := s.recordConnectionFailure(connIndex, err)
 		edgeIndex = rotateEdgeAddrIndex(edgeIndex, len(edgeAddrs))
 		backoff := backoffDuration(int(retries))
 		retryableErr, isRetryable := E.Cast[*RetryableError](err)
 		if isRetryable && retryableErr.Delay > 0 {
 			backoff = retryableErr.Delay
+		}
+		if switched {
+			s.logger.Warn("connection ", connIndex, " switching to fallback protocol ", switchedProtocol, ": ", err)
 		}
 		s.logger.Error("connection ", connIndex, " failed: ", err, ", retrying in ", backoff)
 
@@ -352,22 +357,7 @@ func (s *Service) serveConnection(connIndex uint8, edgeAddr *EdgeAddr) error {
 
 	switch protocol {
 	case protocolQUIC:
-		err := s.serveQUIC(connIndex, edgeAddr, datagramVersion, features, numPreviousAttempts)
-		if err == nil || s.ctx.Err() != nil {
-			return err
-		}
-		if E.IsMulti(err, ErrNonRemoteManagedTunnelUnsupported) {
-			return err
-		}
-		if !s.protocolIsAuto() {
-			return err
-		}
-		if s.hasSuccessfulProtocol(protocolQUIC) {
-			return err
-		}
-		s.setConnectionProtocol(connIndex, protocolHTTP2)
-		s.logger.Warn("QUIC connection failed, falling back to HTTP/2: ", err)
-		return s.serveHTTP2(connIndex, edgeAddr, features, numPreviousAttempts)
+		return s.serveQUIC(connIndex, edgeAddr, datagramVersion, features, numPreviousAttempts)
 	case protocolHTTP2:
 		return s.serveHTTP2(connIndex, edgeAddr, features, numPreviousAttempts)
 	default:
@@ -408,7 +398,11 @@ func (s *Service) serveQUIC(connIndex uint8, edgeAddr *EdgeAddr, datagramVersion
 }
 
 func (s *Service) currentConnectionFeatures() (string, []string) {
-	return s.featureSelector.Snapshot()
+	version, features := s.featureSelector.Snapshot()
+	if s.postQuantum && !hasFeature(features, featurePostQuantum) {
+		features = append(features, featurePostQuantum)
+	}
+	return version, features
 }
 
 func (s *Service) serveHTTP2(connIndex uint8, edgeAddr *EdgeAddr, features []string, numPreviousAttempts uint8) error {
@@ -434,7 +428,7 @@ func (s *Service) initializeConnectionState(connIndex uint8) {
 	defer s.stateAccess.Unlock()
 	s.ensureConnectionStateLocked(connIndex)
 	if s.connectionStates[connIndex].protocol == "" {
-		s.connectionStates[connIndex].protocol = s.initialProtocolLocked()
+		s.connectionStates[connIndex].protocol = s.currentProtocol()
 	}
 }
 
@@ -444,10 +438,34 @@ func (s *Service) connectionState(connIndex uint8) connectionState {
 	s.ensureConnectionStateLocked(connIndex)
 	state := s.connectionStates[connIndex]
 	if state.protocol == "" {
-		state.protocol = s.initialProtocolLocked()
+		state.protocol = s.currentProtocol()
 		s.connectionStates[connIndex] = state
 	}
 	return state
+}
+
+func (s *Service) recordConnectionFailure(connIndex uint8, err error) (uint8, string, bool) {
+	s.stateAccess.Lock()
+	defer s.stateAccess.Unlock()
+	s.ensureConnectionStateLocked(connIndex)
+	state := s.connectionStates[connIndex]
+	if state.protocol == "" {
+		state.protocol = s.currentProtocol()
+	}
+	if state.retries < defaultProtocolRetry {
+		state.retries++
+	}
+	backoffRetries := state.retries
+	if state.protocol == protocolQUIC && (backoffRetries >= defaultProtocolRetry || isQUICBroken(err)) {
+		if fallback, hasFallback := s.fallbackProtocol(); hasFallback && state.protocol != fallback {
+			state.protocol = fallback
+			state.retries = 0
+			s.connectionStates[connIndex] = state
+			return backoffRetries, fallback, true
+		}
+	}
+	s.connectionStates[connIndex] = state
+	return backoffRetries, "", false
 }
 
 func (s *Service) incrementConnectionRetries(connIndex uint8) uint8 {
@@ -455,29 +473,11 @@ func (s *Service) incrementConnectionRetries(connIndex uint8) uint8 {
 	defer s.stateAccess.Unlock()
 	s.ensureConnectionStateLocked(connIndex)
 	state := s.connectionStates[connIndex]
-	state.retries++
+	if state.retries < defaultProtocolRetry {
+		state.retries++
+	}
 	s.connectionStates[connIndex] = state
 	return state.retries
-}
-
-func (s *Service) setConnectionProtocol(connIndex uint8, protocol string) {
-	s.stateAccess.Lock()
-	defer s.stateAccess.Unlock()
-	s.ensureConnectionStateLocked(connIndex)
-	state := s.connectionStates[connIndex]
-	state.protocol = protocol
-	s.connectionStates[connIndex] = state
-}
-
-func (s *Service) hasSuccessfulProtocol(protocol string) bool {
-	s.stateAccess.Lock()
-	defer s.stateAccess.Unlock()
-	_, ok := s.successfulProtocols[protocol]
-	return ok
-}
-
-func (s *Service) protocolIsAuto() bool {
-	return s.protocol == ""
 }
 
 func (s *Service) ensureConnectionStateLocked(connIndex uint8) {
@@ -490,14 +490,23 @@ func (s *Service) ensureConnectionStateLocked(connIndex uint8) {
 	s.connectionStates = grown
 }
 
-func (s *Service) initialProtocolLocked() string {
-	if s.protocol != "" {
-		return s.protocol
+func (s *Service) selector() protocolSelector {
+	if s.protocolSelector != nil {
+		return s.protocolSelector
 	}
-	if s.firstSuccessfulProtocol != "" {
-		return s.firstSuccessfulProtocol
+	selector, err := newProtocolSelector(s.protocol, s.postQuantum)
+	if err != nil {
+		return staticProtocolSelector{current: protocolQUIC}
 	}
-	return protocolQUIC
+	return selector
+}
+
+func (s *Service) currentProtocol() string {
+	return s.selector().Current()
+}
+
+func (s *Service) fallbackProtocol() (string, bool) {
+	return s.selector().Fallback()
 }
 
 func (s *Service) resetDirectOriginTransports() {
@@ -577,14 +586,4 @@ func parseToken(token string) (Credentials, error) {
 		return Credentials{}, E.Cause(err, "unmarshal token")
 	}
 	return tunnelToken.ToCredentials(), nil
-}
-
-func normalizeProtocol(protocol string) (string, error) {
-	if protocol == "auto" {
-		return "", nil
-	}
-	if protocol != "" && protocol != protocolQUIC && protocol != protocolHTTP2 {
-		return "", E.New("unsupported protocol: ", protocol, ", expected auto, quic or http2")
-	}
-	return protocol, nil
 }

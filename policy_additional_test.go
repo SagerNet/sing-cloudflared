@@ -57,6 +57,16 @@ func TestNewEdgeTLSConfigUsesInputs(t *testing.T) {
 	}
 }
 
+func TestApplyPostQuantumCurvePreferencesOverridesDefaultCurves(t *testing.T) {
+	t.Parallel()
+
+	config := newEdgeTLSConfig(x509.NewCertPool(), quicEdgeSNI, []string{quicEdgeALPN})
+	applyPostQuantumCurvePreferences(config, []string{featurePostQuantum})
+	if len(config.CurvePreferences) != 1 || config.CurvePreferences[0] != x25519MLKEM768PQKex {
+		t.Fatalf("unexpected post-quantum curves %#v", config.CurvePreferences)
+	}
+}
+
 func TestGetRegionalServiceName(t *testing.T) {
 	t.Parallel()
 
