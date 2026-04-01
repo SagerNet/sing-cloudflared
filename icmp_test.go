@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -382,6 +383,92 @@ func TestICMPBridgeCleanupExpired(t *testing.T) {
 	}
 	if len(activeState.writer.traces) != 1 {
 		t.Fatalf("expected active trace to remain, got %d", len(activeState.writer.traces))
+	}
+}
+
+func TestParseICMPPacketRejectsMalformedPackets(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name       string
+		packet     []byte
+		wantErrSub string
+	}{
+		{
+			name:       "empty packet",
+			packet:     nil,
+			wantErrSub: "empty IP packet",
+		},
+		{
+			name:       "unsupported version",
+			packet:     []byte{0x30},
+			wantErrSub: "unsupported IP version",
+		},
+		{
+			name:       "short IPv4 header",
+			packet:     bytes.Repeat([]byte{0x45}, 10),
+			wantErrSub: "IPv4 packet too short",
+		},
+		{
+			name:       "invalid IPv4 header length",
+			packet:     append([]byte{0x41}, make([]byte, 19)...),
+			wantErrSub: "invalid IPv4 header length",
+		},
+		{
+			name: "IPv4 non-ICMP protocol",
+			packet: func() []byte {
+				packet := make([]byte, 28)
+				packet[0] = 0x45
+				packet[9] = 17
+				return packet
+			}(),
+			wantErrSub: "IPv4 packet is not ICMP",
+		},
+		{
+			name:       "short IPv6 header",
+			packet:     append([]byte{0x60}, make([]byte, 10)...),
+			wantErrSub: "IPv6 packet too short",
+		},
+		{
+			name: "IPv6 non-ICMP protocol",
+			packet: func() []byte {
+				packet := make([]byte, 48)
+				packet[0] = 0x60
+				packet[6] = 17
+				return packet
+			}(),
+			wantErrSub: "IPv6 packet is not ICMP",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := ParseICMPPacket(testCase.packet)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErrSub) {
+				t.Fatalf("unexpected error %v", err)
+			}
+		})
+	}
+}
+
+func TestMaxEncodedICMPPacketLenScenarios(t *testing.T) {
+	t.Parallel()
+
+	traceContext := ICMPTraceContext{
+		Traced:   true,
+		Identity: bytes.Repeat([]byte{0xaa}, icmpTraceIdentityLength),
+	}
+	if got := maxEncodedICMPPacketLen(icmpWireV2, ICMPTraceContext{}); got != maxV3UDPPayloadLen-typeIDLength {
+		t.Fatalf("unexpected v2 untraced limit %d", got)
+	}
+	if got := maxEncodedICMPPacketLen(icmpWireV2, traceContext); got != maxV3UDPPayloadLen-typeIDLength-icmpTraceIdentityLength {
+		t.Fatalf("unexpected v2 traced limit %d", got)
+	}
+	if got := maxEncodedICMPPacketLen(icmpWireV3, traceContext); got != maxV3UDPPayloadLen-1 {
+		t.Fatalf("unexpected v3 limit %d", got)
+	}
+	if got := maxEncodedICMPPacketLen(icmpWireVersion(99), traceContext); got != 0 {
+		t.Fatalf("expected unknown wire version to return 0, got %d", got)
 	}
 }
 

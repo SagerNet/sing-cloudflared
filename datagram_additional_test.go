@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/google/uuid"
@@ -70,6 +71,20 @@ func TestDatagramV2HandleUDPDatagramRoutesToSession(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected payload to be queued to session")
 	}
+}
+
+func TestDatagramV2HandleUDPDatagramDropsShortAndUnknownSessions(t *testing.T) {
+	t.Parallel()
+
+	muxer := &DatagramV2Muxer{
+		logger:   logger.NOP(),
+		sessions: make(map[uuid.UUID]*udpSession),
+	}
+
+	muxer.handleUDPDatagram(context.Background(), []byte("short"))
+	unknownSessionID := uuidTest(44)
+	unknownSessionPayload := append([]byte("payload"), unknownSessionID[:]...)
+	muxer.handleUDPDatagram(context.Background(), unknownSessionPayload)
 }
 
 func TestUDPSessionPacketConnAdapter(t *testing.T) {
@@ -209,4 +224,81 @@ func TestDatagramV3HandleRegistrationErrorDatagram(t *testing.T) {
 	if sender.sent[0][1] != v3ResponseErrorWithMsg {
 		t.Fatalf("unexpected registration response %x", sender.sent[0])
 	}
+}
+
+func TestDatagramV3HandleRegistrationValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		payload      []byte
+		responseType byte
+	}{
+		{
+			name:         "short IPv4 body",
+			payload:      append([]byte{byte(DatagramV3TypeRegistration)}, make([]byte, v3RegistrationFlagLen+v3RegistrationPortLen+v3RegistrationIdleLen+v3RequestIDLength+v3IPv4AddrLen-1)...),
+			responseType: v3ResponseErrorWithMsg,
+		},
+		{
+			name: "unspecified IPv6 destination",
+			payload: func() []byte {
+				requestID := RequestID{}
+				requestID[15] = 5
+				payload := make([]byte, 1+v3RegistrationFlagLen+v3RegistrationPortLen+v3RegistrationIdleLen+v3RequestIDLength+v3IPv6AddrLen)
+				payload[0] = byte(DatagramV3TypeRegistration)
+				payload[1] = v3FlagIPv6
+				binary.BigEndian.PutUint16(payload[2:4], 53)
+				binary.BigEndian.PutUint16(payload[4:6], 30)
+				copy(payload[6:22], requestID[:])
+				return payload
+			}(),
+			responseType: v3ResponseDestinationUnreachable,
+		},
+		{
+			name: "zero destination port",
+			payload: func() []byte {
+				requestID := RequestID{}
+				requestID[15] = 6
+				payload := make([]byte, 1+v3RegistrationFlagLen+v3RegistrationPortLen+v3RegistrationIdleLen+v3RequestIDLength+v3IPv4AddrLen)
+				payload[0] = byte(DatagramV3TypeRegistration)
+				binary.BigEndian.PutUint16(payload[4:6], 30)
+				copy(payload[6:22], requestID[:])
+				copy(payload[22:26], []byte{127, 0, 0, 1})
+				return payload
+			}(),
+			responseType: v3ResponseDestinationUnreachable,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			serviceInstance := newLimitedService(t, 0)
+			sender := &captureDatagramSender{}
+			muxer := NewDatagramV3Muxer(serviceInstance, sender, serviceInstance.logger)
+
+			muxer.HandleDatagram(context.Background(), testCase.payload)
+
+			if len(sender.sent) != 1 {
+				t.Fatalf("expected one registration response, got %#v", sender.sent)
+			}
+			if sender.sent[0][0] != byte(DatagramV3TypeRegistrationResponse) || sender.sent[0][1] != testCase.responseType {
+				t.Fatalf("unexpected registration response %x", sender.sent[0])
+			}
+		})
+	}
+}
+
+func TestDatagramV3HandlePayloadIgnoresShortAndUnknownSessions(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := newLimitedService(t, 0)
+	muxer := NewDatagramV3Muxer(serviceInstance, &captureDatagramSender{}, serviceInstance.logger)
+
+	muxer.HandleDatagram(context.Background(), []byte{byte(DatagramV3TypePayload)})
+
+	unknownID := RequestID{}
+	unknownID[15] = 7
+	payload := append([]byte{byte(DatagramV3TypePayload)}, unknownID[:]...)
+	payload = append(payload, []byte("data")...)
+	muxer.HandleDatagram(context.Background(), payload)
 }

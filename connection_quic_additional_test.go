@@ -18,6 +18,7 @@ import (
 type bufferQUICStream struct {
 	reader           *bytes.Reader
 	writes           bytes.Buffer
+	writeErr         error
 	cancelReadCount  int
 	cancelWriteCount int
 	closeCount       int
@@ -27,8 +28,13 @@ func newBufferQUICStream(payload []byte) *bufferQUICStream {
 	return &bufferQUICStream{reader: bytes.NewReader(payload)}
 }
 
-func (s *bufferQUICStream) Read(p []byte) (int, error)  { return s.reader.Read(p) }
-func (s *bufferQUICStream) Write(p []byte) (int, error) { return s.writes.Write(p) }
+func (s *bufferQUICStream) Read(p []byte) (int, error) { return s.reader.Read(p) }
+func (s *bufferQUICStream) Write(p []byte) (int, error) {
+	if s.writeErr != nil {
+		return 0, s.writeErr
+	}
+	return s.writes.Write(p)
+}
 func (s *bufferQUICStream) Close() error {
 	s.closeCount++
 	return nil
@@ -330,6 +336,27 @@ func TestQUICOpenRPCStreamWritesSignature(t *testing.T) {
 	defer rwc.Close()
 	if !bytes.Equal(stream.writes.Bytes(), rpcStreamSignature[:]) {
 		t.Fatalf("unexpected rpc stream signature %x", stream.writes.Bytes())
+	}
+}
+
+func TestQUICOpenRPCStreamClosesOnSignatureWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	conn := newScriptedQUICConn()
+	stream := newBufferQUICStream(nil)
+	stream.writeErr = errors.New("write failed")
+	conn.openStreams <- stream
+	connection := &QUICConnection{conn: conn}
+
+	rwc, err := connection.OpenRPCStream(context.Background())
+	if err == nil || err.Error() != "write rpc stream signature: write failed" {
+		t.Fatalf("unexpected OpenRPCStream error %v", err)
+	}
+	if rwc != nil {
+		t.Fatalf("expected nil rpc stream on write failure, got %#v", rwc)
+	}
+	if stream.cancelReadCount != 1 || stream.closeCount != 1 {
+		t.Fatalf("expected failed rpc stream to be closed, got cancelRead=%d close=%d", stream.cancelReadCount, stream.closeCount)
 	}
 }
 

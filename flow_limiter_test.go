@@ -66,6 +66,33 @@ func TestHandleTCPStreamRespectsMaxActiveFlows(t *testing.T) {
 	}
 }
 
+func TestFlowLimiterReleaseCases(t *testing.T) {
+	t.Parallel()
+
+	limiter := &FlowLimiter{}
+	if !limiter.Acquire(1) {
+		t.Fatal("expected initial acquire to succeed")
+	}
+	limiter.Release(1)
+	if !limiter.Acquire(1) {
+		t.Fatal("expected acquire to succeed after release")
+	}
+	limiter.Release(1)
+	limiter.Release(1)
+	if !limiter.Acquire(1) {
+		t.Fatal("expected extra release not to underflow limiter state")
+	}
+
+	unlimited := &FlowLimiter{}
+	if !unlimited.Acquire(0) {
+		t.Fatal("expected unlimited acquire to succeed")
+	}
+	unlimited.Release(0)
+	if !unlimited.Acquire(0) {
+		t.Fatal("expected unlimited acquire to remain unaffected after release")
+	}
+}
+
 func TestHandleTCPStreamRateLimitMetadata(t *testing.T) {
 	t.Parallel()
 	serviceInstance := newLimitedService(t, 1)

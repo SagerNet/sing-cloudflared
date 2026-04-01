@@ -141,6 +141,32 @@ func TestNotifyConnectedResetsRetries(t *testing.T) {
 	}
 }
 
+func TestNotifyConnectedSignalsOnlyOncePerConnection(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.connectedNotify = make(chan uint8, 2)
+	serviceInstance.connectedIndices = make(map[uint8]struct{})
+
+	serviceInstance.notifyConnected(0, "http2")
+	serviceInstance.notifyConnected(0, "http2")
+
+	select {
+	case connected := <-serviceInstance.connectedNotify:
+		if connected != 0 {
+			t.Fatalf("unexpected connected index %d", connected)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected first connected notification")
+	}
+
+	select {
+	case duplicate := <-serviceInstance.connectedNotify:
+		t.Fatalf("unexpected duplicate notification %d", duplicate)
+	default:
+	}
+}
+
 func TestSafeServeConnectionRecoversPanic(t *testing.T) {
 	t.Parallel()
 	restoreConnectionHooks(t)
