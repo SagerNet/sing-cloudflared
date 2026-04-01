@@ -29,8 +29,8 @@ type registrationTestServer struct {
 	registerCalls chan registrationCall
 	unregisterCh  chan struct{}
 
-	result     *RegistrationResult
-	retryAfter time.Duration
+	result      *RegistrationResult
+	retryAfter  time.Duration
 	registerErr error
 }
 
@@ -376,6 +376,55 @@ func TestBuildConnectionOptionsAndCredentialsAuth(t *testing.T) {
 	auth := credentials.Auth()
 	if auth.AccountTag != credentials.AccountTag || string(auth.TunnelSecret) != "secret" {
 		t.Fatalf("unexpected auth %#v", auth)
+	}
+}
+
+func TestBuildConnectionOptionsRoundTripsThroughCapnp(t *testing.T) {
+	t.Parallel()
+
+	connectorID := uuid.New()
+	original := BuildConnectionOptions(connectorID, []string{"serialized_headers", "support_datagram_v3_2"}, 3, net.IPv4(10, 20, 30, 40))
+
+	_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capnpOptions, err := tunnelrpc.NewConnectionOptions(seg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pogs.Insert(tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct, original); err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded RegistrationConnectionOptions
+	if err := pogs.Extract(&decoded, tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := uuid.UUID(decoded.Client.ClientID); got != connectorID {
+		t.Fatalf("unexpected client id %s", got)
+	}
+	if len(decoded.Client.Features) != 2 || decoded.Client.Features[0] != "serialized_headers" || decoded.Client.Features[1] != "support_datagram_v3_2" {
+		t.Fatalf("unexpected feature list %#v", decoded.Client.Features)
+	}
+	if decoded.Client.Version != clientVersion {
+		t.Fatalf("unexpected client version %q", decoded.Client.Version)
+	}
+	if decoded.Client.Arch != runtime.GOOS+"_"+runtime.GOARCH {
+		t.Fatalf("unexpected client arch %q", decoded.Client.Arch)
+	}
+	if !decoded.OriginLocalIP.Equal(net.IPv4(10, 20, 30, 40)) {
+		t.Fatalf("unexpected origin local IP %v", decoded.OriginLocalIP)
+	}
+	if decoded.NumPreviousAttempts != 3 {
+		t.Fatalf("unexpected previous attempts %d", decoded.NumPreviousAttempts)
+	}
+	if decoded.ReplaceExisting {
+		t.Fatal("expected replace_existing to remain false")
+	}
+	if decoded.CompressionQuality != 0 {
+		t.Fatalf("unexpected compression quality %d", decoded.CompressionQuality)
 	}
 }
 

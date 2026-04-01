@@ -3,9 +3,11 @@ package cloudflared
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,6 +40,13 @@ type blockingPacketConn struct {
 	closed chan struct{}
 }
 
+type controlledReadPacketConn struct {
+	closed     chan struct{}
+	reads      chan []byte
+	readErr    error
+	closeCount atomic.Int32
+}
+
 func newRecordingPacketConn() *recordingPacketConn {
 	return &recordingPacketConn{
 		closed: make(chan struct{}),
@@ -47,6 +56,13 @@ func newRecordingPacketConn() *recordingPacketConn {
 
 func newBlockingPacketConn() *blockingPacketConn {
 	return &blockingPacketConn{closed: make(chan struct{})}
+}
+
+func newControlledReadPacketConn() *controlledReadPacketConn {
+	return &controlledReadPacketConn{
+		closed: make(chan struct{}),
+		reads:  make(chan []byte, 4),
+	}
 }
 
 func (c *recordingPacketConn) ReadPacket(_ *buf.Buffer) (M.Socksaddr, error) {
@@ -90,6 +106,36 @@ func (c *blockingPacketConn) LocalAddr() net.Addr              { return &net.UDP
 func (c *blockingPacketConn) SetDeadline(time.Time) error      { return nil }
 func (c *blockingPacketConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *blockingPacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *controlledReadPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
+	if c.readErr != nil {
+		return M.Socksaddr{}, c.readErr
+	}
+
+	select {
+	case payload := <-c.reads:
+		_, err := buffer.Write(payload)
+		return M.Socksaddr{}, err
+	case <-c.closed:
+		return M.Socksaddr{}, io.EOF
+	}
+}
+
+func (c *controlledReadPacketConn) WritePacket(buffer *buf.Buffer, _ M.Socksaddr) error {
+	buffer.Release()
+	return nil
+}
+
+func (c *controlledReadPacketConn) Close() error {
+	c.closeCount.Add(1)
+	closeOnce(c.closed)
+	return nil
+}
+
+func (c *controlledReadPacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (c *controlledReadPacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *controlledReadPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *controlledReadPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
 type packetDialingHandler struct {
 	testHandler
@@ -471,5 +517,134 @@ func TestDatagramV3MigrationUpdatesSessionContext(t *testing.T) {
 			t.Fatal("expected session to be removed after new context cancellation")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestDatagramV3MigrationRoutesOriginRepliesToNewSender(t *testing.T) {
+	t.Parallel()
+
+	packetConn := newControlledReadPacketConn()
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.handler = &packetDialingHandler{packetConn: packetConn}
+	sender1 := &captureDatagramSender{}
+	sender2 := &captureDatagramSender{}
+	muxer1 := NewDatagramV3Muxer(serviceInstance, sender1, serviceInstance.logger)
+	muxer2 := NewDatagramV3Muxer(serviceInstance, sender2, serviceInstance.logger)
+
+	requestID := RequestID{}
+	requestID[15] = 13
+	payload := newV3RegistrationPayload(requestID, 0, 53, 30, []byte{127, 0, 0, 1}, nil)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	muxer1.handleRegistration(ctx1, payload)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	muxer2.handleRegistration(ctx2, payload)
+
+	sender1.sent = nil
+	sender2.sent = nil
+
+	cancel1()
+	time.Sleep(50 * time.Millisecond)
+	packetConn.reads <- []byte("reply")
+
+	deadline := time.After(time.Second)
+	for len(sender2.sent) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("expected migrated sender to receive origin payload")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if len(sender1.sent) != 0 {
+		t.Fatalf("expected old sender to stay idle after migration, got %#v", sender1.sent)
+	}
+	if got := sender2.sent[0]; got[0] != byte(DatagramV3TypePayload) || string(got[v3PayloadHeaderLen:]) != "reply" {
+		t.Fatalf("unexpected migrated payload %x", got)
+	}
+
+	cancel2()
+	waitForV3SessionRemoval(t, serviceInstance.datagramV3Manager, requestID)
+}
+
+func TestDatagramV3SessionCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	packetConn := newControlledReadPacketConn()
+	session := &v3Session{
+		origin:    packetConn,
+		closeChan: make(chan struct{}),
+	}
+
+	session.close()
+	session.close()
+
+	if packetConn.closeCount.Load() != 1 {
+		t.Fatalf("expected one origin close, got %d", packetConn.closeCount.Load())
+	}
+	select {
+	case <-session.closeChan:
+	default:
+		t.Fatal("expected session close channel to be closed")
+	}
+}
+
+func TestDatagramV3SessionContextCancellationRemovesSession(t *testing.T) {
+	t.Parallel()
+
+	packetConn := newBlockingPacketConn()
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.handler = &packetDialingHandler{packetConn: packetConn}
+
+	requestID := RequestID{}
+	requestID[15] = 14
+	ctx, cancel := context.WithCancel(context.Background())
+	_, state, err := serviceInstance.datagramV3Manager.Register(
+		serviceInstance,
+		ctx,
+		requestID,
+		netip.MustParseAddrPort("127.0.0.1:53"),
+		time.Second,
+		&captureDatagramSender{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != v3RegistrationNew {
+		t.Fatalf("unexpected registration state %v", state)
+	}
+
+	cancel()
+	waitForV3SessionRemoval(t, serviceInstance.datagramV3Manager, requestID)
+}
+
+func TestDatagramV3SessionReadErrorRemovesSession(t *testing.T) {
+	t.Parallel()
+
+	packetConn := newControlledReadPacketConn()
+	packetConn.readErr = errors.New("read failed")
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.handler = &packetDialingHandler{packetConn: packetConn}
+
+	requestID := RequestID{}
+	requestID[15] = 15
+	_, state, err := serviceInstance.datagramV3Manager.Register(
+		serviceInstance,
+		context.Background(),
+		requestID,
+		netip.MustParseAddrPort("127.0.0.1:53"),
+		time.Second,
+		&captureDatagramSender{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != v3RegistrationNew {
+		t.Fatalf("unexpected registration state %v", state)
+	}
+
+	waitForV3SessionRemoval(t, serviceInstance.datagramV3Manager, requestID)
+	if packetConn.closeCount.Load() != 1 {
+		t.Fatalf("expected read error to close origin once, got %d", packetConn.closeCount.Load())
 	}
 }
