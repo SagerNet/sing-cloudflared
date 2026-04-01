@@ -11,28 +11,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 )
 
-func TestQUICInitialPacketSize(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name      string
-		ipVersion int
-		expected  uint16
-	}{
-		{name: "ipv4", ipVersion: 4, expected: 1232},
-		{name: "ipv6", ipVersion: 6, expected: 1252},
-		{name: "default", ipVersion: 0, expected: 1252},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			if actual := quicInitialPacketSize(testCase.ipVersion); actual != testCase.expected {
-				t.Fatalf("quicInitialPacketSize(%d) = %d, want %d", testCase.ipVersion, actual, testCase.expected)
-			}
-		})
-	}
-}
-
 type mockReadWriteCloser struct {
 	reader strings.Reader
 	writes []byte

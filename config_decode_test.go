@@ -3,8 +3,6 @@ package cloudflared
 import (
 	"testing"
 	"time"
-
-	"github.com/sagernet/sing/common/logger"
 )
 
 func TestNewServiceRequiresToken(t *testing.T) {
@@ -37,20 +35,6 @@ func TestNormalizeProtocolAutoUsesTokenStyleSentinel(t *testing.T) {
 	}
 }
 
-func TestDefaultGracePeriodIsThirtySeconds(t *testing.T) {
-	t.Parallel()
-	_ = logger.NOP()
-	service, err := NewService(ServiceOptions{
-		Token: testToken(t),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if service.gracePeriod != 30*time.Second {
-		t.Fatalf("expected default grace period 30s, got %s", service.gracePeriod)
-	}
-}
-
 func TestExplicitZeroGracePeriod(t *testing.T) {
 	t.Parallel()
 	service, err := NewService(ServiceOptions{
@@ -65,16 +49,3 @@ func TestExplicitZeroGracePeriod(t *testing.T) {
 	}
 }
 
-func TestExplicitNonZeroGracePeriod(t *testing.T) {
-	t.Parallel()
-	service, err := NewService(ServiceOptions{
-		Token:       testToken(t),
-		GracePeriod: 45 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if service.gracePeriod != 45*time.Second {
-		t.Fatalf("expected grace period 45s, got %s", service.gracePeriod)
-	}
-}

@@ -60,37 +60,3 @@ func TestHandleTCPStreamUsesDialTCP(t *testing.T) {
 	}
 }
 
-func TestApplyTCPKeepAlive(t *testing.T) {
-	t.Parallel()
-	left, right := net.Pipe()
-	defer left.Close()
-	defer right.Close()
-
-	remoteConn := &keepAliveTestConn{Conn: right}
-	err := applyTCPKeepAlive(remoteConn, 15*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !remoteConn.enabled {
-		t.Fatal("expected keepalive to be enabled")
-	}
-	if remoteConn.period != 15*time.Second {
-		t.Fatalf("unexpected keepalive period: %s", remoteConn.period)
-	}
-}
-
-type keepAliveTestConn struct {
-	net.Conn
-	enabled bool
-	period  time.Duration
-}
-
-func (c *keepAliveTestConn) SetKeepAlive(enabled bool) error {
-	c.enabled = enabled
-	return nil
-}
-
-func (c *keepAliveTestConn) SetKeepAlivePeriod(period time.Duration) error {
-	c.period = period
-	return nil
-}

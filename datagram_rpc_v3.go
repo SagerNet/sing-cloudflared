@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/sagernet/sing-cloudflared/tunnelrpc"
@@ -13,8 +12,8 @@ import (
 )
 
 var (
-	errUnsupportedDatagramV3UDPRegistration   = errors.New("datagram v3 does not support RegisterUdpSession RPC")
-	errUnsupportedDatagramV3UDPUnregistration = errors.New("datagram v3 does not support UnregisterUdpSession RPC")
+	errUnsupportedDatagramV3UDPRegistration   = E.New("datagram v3 does not support RegisterUdpSession RPC")
+	errUnsupportedDatagramV3UDPUnregistration = E.New("datagram v3 does not support UnregisterUdpSession RPC")
 )
 
 type cloudflaredV3Server struct {

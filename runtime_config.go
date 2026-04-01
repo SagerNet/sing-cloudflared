@@ -1,7 +1,6 @@
 package cloudflared
 
 import (
-	"encoding/json"
 	"net"
 	"net/url"
 	"regexp"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"golang.org/x/net/idna"
@@ -261,7 +261,8 @@ func defaultRuntimeConfig() (RuntimeConfig, error) {
 
 func buildRemoteRuntimeConfig(raw []byte) (RuntimeConfig, error) {
 	var remote remoteConfigJSON
-	if err := json.Unmarshal(raw, &remote); err != nil {
+	err := json.Unmarshal(raw, &remote)
+	if err != nil {
 		return RuntimeConfig{}, E.Cause(err, "decode remote config")
 	}
 	defaultOriginRequest := originRequestFromRemote(remote.OriginRequest)
@@ -360,10 +361,12 @@ func compileIngressRules(defaultOriginRequest OriginRequestConfig, rawRules []lo
 
 	compiled := make([]compiledIngressRule, 0, len(rawRules))
 	for index, rule := range rawRules {
-		if err := validateHostname(rule.Hostname, index == len(rawRules)-1); err != nil {
+		err := validateHostname(rule.Hostname, index == len(rawRules)-1)
+		if err != nil {
 			return nil, err
 		}
-		if err := validateAccessConfiguration(rule.OriginRequest.Access); err != nil {
+		err = validateAccessConfiguration(rule.OriginRequest.Access)
+		if err != nil {
 			return nil, err
 		}
 		service, err := parseResolvedService(rule.Service, rule.OriginRequest)

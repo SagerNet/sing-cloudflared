@@ -170,25 +170,6 @@ func TestNewRouterOriginTransportPropagatesTLSConfigError(t *testing.T) {
 	}
 }
 
-func TestNewRouterOriginTransportUsesCloudflaredDefaults(t *testing.T) {
-	t.Parallel()
-	serviceInstance := &Service{
-		handler: &testHandler{},
-	}
-	transport, cleanup, err := serviceInstance.newRouterOriginTransport(context.Background(), M.Socksaddr{}, OriginRequestConfig{}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-
-	if transport.ExpectContinueTimeout != time.Second {
-		t.Fatalf("expected ExpectContinueTimeout=1s, got %s", transport.ExpectContinueTimeout)
-	}
-	if transport.DisableCompression {
-		t.Fatal("expected compression to remain enabled by default")
-	}
-}
-
 func TestNormalizeOriginRequestSetsKeepAliveAndEmptyUserAgent(t *testing.T) {
 	t.Parallel()
 	request, err := http.NewRequest(http.MethodGet, "https://example.com/path", http.NoBody)

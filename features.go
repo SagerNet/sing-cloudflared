@@ -2,11 +2,12 @@ package cloudflared
 
 import (
 	"context"
-	"encoding/json"
 	"hash/fnv"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/sagernet/sing/common/json"
 )
 
 const (
@@ -102,7 +103,8 @@ func (s *featureSelector) refreshLoop(ctx context.Context) {
 
 func resolveRemoteDatagramVersion(accountTag string, record []byte) (string, error) {
 	var features cloudflaredFeaturesRecord
-	if err := json.Unmarshal(record, &features); err != nil {
+	err := json.Unmarshal(record, &features)
+	if err != nil {
 		return "", err
 	}
 	if accountEnabled(accountTag, features.DatagramV3Percentage) {

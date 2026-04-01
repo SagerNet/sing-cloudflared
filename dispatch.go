@@ -3,7 +3,6 @@ package cloudflared
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 )
 

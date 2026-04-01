@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing/common/buf"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -106,7 +107,8 @@ func (m *DatagramV3Muxer) HandleDatagram(ctx context.Context, data []byte) {
 	case DatagramV3TypePayload:
 		m.handlePayload(payload)
 	case DatagramV3TypeICMP:
-		if err := m.icmp.HandleV3(ctx, payload); err != nil {
+		err := m.icmp.HandleV3(ctx, payload)
+		if err != nil {
 			m.logger.Debug("drop V3 ICMP datagram: ", err)
 		}
 	case DatagramV3TypeRegistrationResponse:
@@ -244,7 +246,7 @@ type v3Session struct {
 	contextChan   chan context.Context
 }
 
-var errTooManyActiveFlows = errors.New("too many active flows")
+var errTooManyActiveFlows = E.New("too many active flows")
 
 func (m *DatagramV3SessionManager) Register(
 	service *Service,

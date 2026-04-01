@@ -92,7 +92,8 @@ type capnpV2SessionRPCClient struct {
 
 func (c *capnpV2SessionRPCClient) UnregisterSession(ctx context.Context, sessionID uuid.UUID, message string) error {
 	promise := c.client.UnregisterUdpSession(ctx, func(p tunnelrpc.SessionManager_unregisterUdpSession_Params) error {
-		if err := p.SetSessionId(sessionID[:]); err != nil {
+		err := p.SetSessionId(sessionID[:])
+		if err != nil {
 			return err
 		}
 		return p.SetMessage(message)
@@ -118,11 +119,13 @@ func (m *DatagramV2Muxer) HandleDatagram(ctx context.Context, data []byte) {
 	case DatagramV2TypeUDP:
 		m.handleUDPDatagram(ctx, payload)
 	case DatagramV2TypeIP:
-		if err := m.icmp.HandleV2(ctx, datagramType, payload); err != nil {
+		err := m.icmp.HandleV2(ctx, datagramType, payload)
+		if err != nil {
 			m.logger.Debug("drop V2 ICMP datagram: ", err)
 		}
 	case DatagramV2TypeIPWithTrace:
-		if err := m.icmp.HandleV2(ctx, datagramType, payload); err != nil {
+		err := m.icmp.HandleV2(ctx, datagramType, payload)
+		if err != nil {
 			m.logger.Debug("drop V2 traced ICMP datagram: ", err)
 		}
 	case DatagramV2TypeTracingSpan:
@@ -237,7 +240,8 @@ func (m *DatagramV2Muxer) serveSession(ctx context.Context, session *udpSession,
 	if !session.remoteClosed() {
 		unregisterCtx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 		defer cancel()
-		if err := m.unregisterRemoteSession(unregisterCtx, session.id, session.closeReason()); err != nil {
+		err := m.unregisterRemoteSession(unregisterCtx, session.id, session.closeReason())
+		if err != nil {
 			m.logger.Debug("failed to unregister V2 UDP session ", session.id, ": ", err)
 		}
 	}

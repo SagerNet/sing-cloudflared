@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNonRemoteManagedTunnelUnsupported = errors.New("cloudflared only supports remote-managed tunnels")
+var ErrNonRemoteManagedTunnelUnsupported = E.New("cloudflared only supports remote-managed tunnels")
 
 var (
 	newQUICConnection   = NewQUICConnection

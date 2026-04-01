@@ -160,7 +160,7 @@ func createUDPConnForConnIndex(ctx context.Context, edgeAddr *EdgeAddr, tunnelDi
 	udpConn, ok := packetConn.(*net.UDPConn)
 	if !ok {
 		packetConn.Close()
-		return nil, fmt.Errorf("unexpected packet conn type %T", packetConn)
+		return nil, E.New("unexpected packet conn type: ", fmt.Sprintf("%T", packetConn))
 	}
 	return udpConn, nil
 }
@@ -420,7 +420,7 @@ func (n *nopCloserReadWriter) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if atomic.LoadUint32(&n.closed) > 0 {
-		return 0, fmt.Errorf("closed by handler")
+		return 0, E.New("closed by handler")
 	}
 
 	readLen, err := n.ReadWriteCloser.Read(p)
