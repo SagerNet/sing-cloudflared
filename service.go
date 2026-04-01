@@ -21,6 +21,7 @@ import (
 var ErrNonRemoteManagedTunnelUnsupported = E.New("cloudflared only supports remote-managed tunnels")
 
 var (
+	discoverEdge        = DiscoverEdge
 	newQUICConnection   = NewQUICConnection
 	newHTTP2Connection  = NewHTTP2Connection
 	serveQUICConnection = func(connection *QUICConnection, ctx context.Context, handler StreamHandler) error {
@@ -203,7 +204,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 func (s *Service) Start() error {
 	s.logger.Info("starting Cloudflare Tunnel with ", s.haConnections, " HA connections")
 
-	regions, err := DiscoverEdge(s.ctx, s.region, s.controlDialer)
+	regions, err := discoverEdge(s.ctx, s.region, s.controlDialer)
 	if err != nil {
 		return E.Cause(err, "discover edge")
 	}

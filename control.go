@@ -21,6 +21,10 @@ const (
 
 var clientVersion = "sing-cloudflared"
 
+var newRegistrationClient = func(ctx context.Context, stream io.ReadWriteCloser) registrationRPCClient {
+	return NewRegistrationClient(ctx, stream)
+}
+
 type RegistrationClient struct {
 	client    tunnelrpc.TunnelServer
 	rpcConn   *rpc.Conn

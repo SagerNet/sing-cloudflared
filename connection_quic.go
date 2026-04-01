@@ -66,8 +66,8 @@ type quicStreamHandle interface {
 }
 
 type quicConnection interface {
-	OpenStream() (*quic.Stream, error)
-	AcceptStream(ctx context.Context) (*quic.Stream, error)
+	OpenStream() (quicStreamHandle, error)
+	AcceptStream(ctx context.Context) (quicStreamHandle, error)
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
 	SendDatagram(data []byte) error
 	LocalAddr() net.Addr
@@ -83,6 +83,14 @@ func (c *closeableQUICConn) CloseWithError(code quic.ApplicationErrorCode, reaso
 	err := c.Conn.CloseWithError(code, reason)
 	_ = c.udpConn.Close()
 	return err
+}
+
+func (c *closeableQUICConn) OpenStream() (quicStreamHandle, error) {
+	return c.Conn.OpenStream()
+}
+
+func (c *closeableQUICConn) AcceptStream(ctx context.Context) (quicStreamHandle, error) {
+	return c.Conn.AcceptStream(ctx)
 }
 
 func NewQUICConnection(
@@ -199,8 +207,8 @@ func (q *QUICConnection) Serve(ctx context.Context, handler StreamHandler) error
 	}
 }
 
-func (q *QUICConnection) register(ctx context.Context, stream *quic.Stream) error {
-	q.registrationClient = NewRegistrationClient(ctx, newStreamReadWriteCloser(stream))
+func (q *QUICConnection) register(ctx context.Context, stream quicStreamHandle) error {
+	q.registrationClient = newRegistrationClient(ctx, newStreamReadWriteCloser(stream))
 
 	host, _, _ := net.SplitHostPort(q.conn.LocalAddr().String())
 	originLocalIP := net.ParseIP(host)

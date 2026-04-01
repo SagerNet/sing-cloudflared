@@ -171,7 +171,7 @@ func (c *HTTP2Connection) handleControlStream(ctx context.Context, r *http.Reque
 
 	stream := newHTTP2Stream(r.Body, &http2FlushWriter{w: w, flusher: flusher})
 
-	c.registrationClient = NewRegistrationClient(ctx, stream)
+	c.registrationClient = newRegistrationClient(ctx, stream)
 
 	host, _, _ := net.SplitHostPort(c.conn.LocalAddr().String())
 	originLocalIP := net.ParseIP(host)

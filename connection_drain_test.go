@@ -38,8 +38,8 @@ func newStubQUICConn() *stubQUICConn {
 	return &stubQUICConn{closed: make(chan string, 1)}
 }
 
-func (c *stubQUICConn) OpenStream() (*quic.Stream, error) { return nil, errors.New("unused") }
-func (c *stubQUICConn) AcceptStream(context.Context) (*quic.Stream, error) {
+func (c *stubQUICConn) OpenStream() (quicStreamHandle, error) { return nil, errors.New("unused") }
+func (c *stubQUICConn) AcceptStream(context.Context) (quicStreamHandle, error) {
 	return nil, errors.New("unused")
 }
 
