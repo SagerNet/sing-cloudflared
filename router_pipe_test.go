@@ -59,4 +59,3 @@ func TestHandleTCPStreamUsesDialTCP(t *testing.T) {
 		t.Fatal("timed out waiting for TCP stream handler to exit")
 	}
 }
-

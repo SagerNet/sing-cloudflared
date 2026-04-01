@@ -48,4 +48,3 @@ func TestExplicitZeroGracePeriod(t *testing.T) {
 		t.Fatalf("expected zero to use default 30s, got %s", service.gracePeriod)
 	}
 }
-

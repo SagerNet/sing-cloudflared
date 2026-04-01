@@ -131,4 +131,3 @@ func TestApplyConfigClearsDirectOriginTransportCache(t *testing.T) {
 		t.Fatal("expected ApplyConfig to clear direct-origin transport cache")
 	}
 }
-

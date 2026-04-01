@@ -1,3 +1,11 @@
+capnp:
+	@go run ./cmd/internal/capnpgen
+	@gofumpt -l -w .
+	@gofumpt -l -w .
+
+capnp_install:
+	go install -v zombiezen.com/go/capnproto2/capnpc-go@v2.18.2
+
 fmt:
 	@gofumpt -l -w .
 	@gofmt -s -w .
