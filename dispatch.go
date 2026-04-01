@@ -131,7 +131,9 @@ func (s *Service) dispatchRequest(ctx context.Context, stream io.ReadWriteCloser
 		request.Dest = originURL
 		s.handleHTTPService(ctx, stream, respWriter, request, service)
 	default:
-		s.logger.ErrorContext(ctx, "unknown connection type: ", request.Type)
+		err := E.New("unknown connection type: ", request.Type)
+		s.logger.ErrorContext(ctx, err)
+		respWriter.WriteResponse(err, nil)
 	}
 }
 
@@ -600,11 +602,45 @@ func newStreamConn(stream io.ReadWriteCloser) *streamConn {
 	return &streamConn{ReadWriteCloser: stream}
 }
 
-func (c *streamConn) LocalAddr() net.Addr                { return nil }
-func (c *streamConn) RemoteAddr() net.Addr               { return nil }
-func (c *streamConn) SetDeadline(_ time.Time) error      { return nil }
-func (c *streamConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (c *streamConn) SetWriteDeadline(_ time.Time) error { return nil }
+func (c *streamConn) LocalAddr() net.Addr {
+	type localAddr interface{ LocalAddr() net.Addr }
+	if conn, ok := c.ReadWriteCloser.(localAddr); ok {
+		return conn.LocalAddr()
+	}
+	return nil
+}
+
+func (c *streamConn) RemoteAddr() net.Addr {
+	type remoteAddr interface{ RemoteAddr() net.Addr }
+	if conn, ok := c.ReadWriteCloser.(remoteAddr); ok {
+		return conn.RemoteAddr()
+	}
+	return nil
+}
+
+func (c *streamConn) SetDeadline(t time.Time) error {
+	type deadlineSetter interface{ SetDeadline(time.Time) error }
+	if conn, ok := c.ReadWriteCloser.(deadlineSetter); ok {
+		return conn.SetDeadline(t)
+	}
+	return nil
+}
+
+func (c *streamConn) SetReadDeadline(t time.Time) error {
+	type readDeadlineSetter interface{ SetReadDeadline(time.Time) error }
+	if conn, ok := c.ReadWriteCloser.(readDeadlineSetter); ok {
+		return conn.SetReadDeadline(t)
+	}
+	return nil
+}
+
+func (c *streamConn) SetWriteDeadline(t time.Time) error {
+	type writeDeadlineSetter interface{ SetWriteDeadline(time.Time) error }
+	if conn, ok := c.ReadWriteCloser.(writeDeadlineSetter); ok {
+		return conn.SetWriteDeadline(t)
+	}
+	return nil
+}
 
 type datagramVersionedSender interface {
 	DatagramVersion() string

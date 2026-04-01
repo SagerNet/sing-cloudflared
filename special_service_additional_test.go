@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/ws"
+	"github.com/sagernet/ws/wsutil"
 )
 
 func TestStreamServiceHostnameAdditionalCases(t *testing.T) {
@@ -310,6 +313,20 @@ func (h *dialErrorHandler) DialTCP(ctx context.Context, destination M.Socksaddr)
 	return nil, h.err
 }
 
+type closingPipeHandler struct {
+	testHandler
+	delay time.Duration
+}
+
+func (h *closingPipeHandler) DialTCP(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+	client, server := net.Pipe()
+	go func() {
+		time.Sleep(h.delay)
+		_ = server.Close()
+	}()
+	return client, nil
+}
+
 func TestServeSocksProxyWritesDialErrorReply(t *testing.T) {
 	t.Parallel()
 
@@ -361,5 +378,83 @@ func TestServeSocksProxyWritesDialErrorReply(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected serveSocksProxy to exit")
+	}
+}
+
+func TestHandleStreamServiceReturnsWhenContextCanceledDuringClientSpam(t *testing.T) {
+	t.Parallel()
+
+	listener := startEchoListener(t)
+	defer listener.Close()
+
+	serverSide, clientSide := net.Pipe()
+	defer clientSide.Close()
+
+	serviceInstance := newSpecialService(t)
+	respWriter := &fakeConnectResponseWriter{done: make(chan struct{})}
+	request := &ConnectRequest{
+		Type: ConnectionTypeWebsocket,
+		Metadata: []Metadata{
+			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serviceInstance.handleStreamService(ctx, serverSide, respWriter, request, ResolvedService{
+			Kind:          ResolvedServiceStream,
+			Destination:   M.ParseSocksaddr(listener.Addr().String()),
+			StreamHasPort: true,
+		})
+	}()
+
+	select {
+	case <-respWriter.done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for stream service websocket upgrade")
+	}
+	if respWriter.err != nil {
+		t.Fatal(respWriter.err)
+	}
+	if respWriter.status != http.StatusSwitchingProtocols {
+		t.Fatalf("unexpected websocket response status %d", respWriter.status)
+	}
+	if err := wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	data, opCode, err := wsutil.ReadServerData(clientSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opCode != ws.OpBinary || string(data) != "hello" {
+		t.Fatalf("unexpected initial websocket echo op=%v data=%q", opCode, data)
+	}
+
+	spamDone := make(chan struct{})
+	go func() {
+		defer close(spamDone)
+		for {
+			if err := wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("spam")); err != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	_ = clientSide.Close()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected stream service to return after cancellation")
+	}
+	select {
+	case <-spamDone:
+	case <-time.After(time.Second):
+		t.Fatal("expected client writer to observe closed websocket stream")
 	}
 }

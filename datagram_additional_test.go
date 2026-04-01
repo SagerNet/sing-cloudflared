@@ -1,6 +1,7 @@
 package cloudflared
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"io"
@@ -18,7 +19,9 @@ import (
 
 type noopPacketConn struct{}
 
-func (noopPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) { return M.Socksaddr{}, io.EOF }
+func (noopPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
+	return M.Socksaddr{}, io.EOF
+}
 func (noopPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	buffer.Release()
 	return nil
@@ -85,6 +88,58 @@ func TestDatagramV2HandleUDPDatagramDropsShortAndUnknownSessions(t *testing.T) {
 	unknownSessionID := uuidTest(44)
 	unknownSessionPayload := append([]byte("payload"), unknownSessionID[:]...)
 	muxer.handleUDPDatagram(context.Background(), unknownSessionPayload)
+}
+
+func TestDatagramV2HandleDatagramDispatchesByType(t *testing.T) {
+	t.Parallel()
+
+	sessionID := uuidTest(13)
+	session := newUDPSession(sessionID, netip.MustParseAddrPort("127.0.0.1:53"), time.Second, noopPacketConn{}, nil)
+	sender := &captureDatagramSender{}
+	muxer := NewDatagramV2Muxer(&Service{
+		icmpHandler: &replyICMPHandler{reply: buildEchoReply},
+	}, sender, logger.NOP())
+	muxer.sessions[sessionID] = session
+
+	udpPayload := append([]byte("udp"), sessionID[:]...)
+	udpPayload = append(udpPayload, byte(DatagramV2TypeUDP))
+	muxer.HandleDatagram(context.Background(), udpPayload)
+	select {
+	case queued := <-session.writeChan:
+		if string(queued) != "udp" {
+			t.Fatalf("unexpected queued udp payload %q", queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected UDP payload to be dispatched")
+	}
+
+	icmpPayload := append(buildIPv4ICMPPacket(
+		netip.MustParseAddr("198.18.0.2"),
+		netip.MustParseAddr("1.1.1.1"),
+		icmpv4TypeEchoRequest, 0, 1, 1,
+	), byte(DatagramV2TypeIP))
+	muxer.HandleDatagram(context.Background(), icmpPayload)
+	if len(sender.sent) != 1 || sender.sent[0][len(sender.sent[0])-1] != byte(DatagramV2TypeIP) {
+		t.Fatalf("unexpected v2 ICMP response %#v", sender.sent)
+	}
+
+	traceIdentity := bytes.Repeat([]byte{0x7a}, icmpTraceIdentityLength)
+	tracedPayload := append(buildIPv4ICMPPacket(
+		netip.MustParseAddr("198.18.0.3"),
+		netip.MustParseAddr("1.1.1.1"),
+		icmpv4TypeEchoRequest, 0, 2, 2,
+	), traceIdentity...)
+	tracedPayload = append(tracedPayload, byte(DatagramV2TypeIPWithTrace))
+	muxer.HandleDatagram(context.Background(), tracedPayload)
+	if len(sender.sent) != 2 || sender.sent[1][len(sender.sent[1])-1] != byte(DatagramV2TypeIP) {
+		t.Fatalf("unexpected traced v2 ICMP response %#v", sender.sent)
+	}
+
+	muxer.HandleDatagram(context.Background(), []byte{byte(DatagramV2TypeTracingSpan)})
+	muxer.HandleDatagram(context.Background(), []byte{0xff})
+	if len(sender.sent) != 2 {
+		t.Fatalf("unexpected datagrams after ignored types %#v", sender.sent)
+	}
 }
 
 func TestUDPSessionPacketConnAdapter(t *testing.T) {

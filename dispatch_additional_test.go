@@ -78,6 +78,26 @@ func TestHandleDataStreamWritesStatusConnectResponse(t *testing.T) {
 	}
 }
 
+func TestHandleDataStreamWritesUnknownConnectionTypeError(t *testing.T) {
+	t.Parallel()
+
+	serviceInstance := newSpecialService(t)
+	stream := &captureReadWriteCloser{}
+	request := &ConnectRequest{
+		Type: ConnectionType(99),
+		Dest: "ignored",
+	}
+
+	serviceInstance.HandleDataStream(context.Background(), stream, request, 0)
+	response := decodeConnectResponseForTest(t, stream.body)
+	if response.Error != "unknown connection type: unknown" {
+		t.Fatalf("unexpected connect response error %q", response.Error)
+	}
+	if len(response.Metadata) != 0 {
+		t.Fatalf("unexpected response metadata %#v", response.Metadata)
+	}
+}
+
 func TestHandleRPCStreamWithSenderSelectsDatagramVersion(t *testing.T) {
 	t.Parallel()
 

@@ -262,3 +262,66 @@ func TestSuperviseConnectionCancelsServiceOnNonRemoteManagedError(t *testing.T) 
 		t.Fatal("expected service cancellation on non-remote-managed tunnel error")
 	}
 }
+
+func TestSuperviseConnectionUsesRetryableDelayAndRotatesEdges(t *testing.T) {
+	t.Parallel()
+	restoreConnectionHooks(t)
+
+	serviceInstance := newLimitedService(t, 0)
+	serviceInstance.protocol = "quic"
+	serviceInstance.initializeConnectionState(0)
+
+	edge1 := &EdgeAddr{}
+	edge2 := &EdgeAddr{}
+	attempts := make(chan *EdgeAddr, 3)
+
+	var serveCalls int
+	serveQUICConnection = func(*QUICConnection, context.Context, StreamHandler) error {
+		serveCalls++
+		switch serveCalls {
+		case 1, 2:
+			return &RetryableError{Err: errors.New("retry"), Delay: 20 * time.Millisecond}
+		default:
+			serviceInstance.cancel()
+			return context.Canceled
+		}
+	}
+	newQUICConnection = func(ctx context.Context, edgeAddr *EdgeAddr, connIndex uint8, credentials Credentials, connectorID uuid.UUID, datagramVersion string, features []string, numPreviousAttempts uint8, gracePeriod time.Duration, tunnelDialer N.Dialer, onConnected func(), log logger.ContextLogger) (*QUICConnection, error) {
+		attempts <- edgeAddr
+		return &QUICConnection{}, nil
+	}
+
+	serviceInstance.done.Add(1)
+	done := make(chan struct{})
+	started := time.Now()
+	go func() {
+		serviceInstance.superviseConnection(0, []*EdgeAddr{edge1, edge2})
+		close(done)
+	}()
+
+	var sequence []*EdgeAddr
+	for expected := range 3 {
+		select {
+		case edgeAddr := <-attempts:
+			sequence = append(sequence, edgeAddr)
+			if expected == 1 && time.Since(started) > 500*time.Millisecond {
+				t.Fatalf("expected retryable delay override to retry quickly, elapsed=%v", time.Since(started))
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("expected connection attempt %d", expected+1)
+		}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected supervision loop to stop after cancellation")
+	}
+
+	if len(sequence) != 3 || sequence[0] != edge1 || sequence[1] != edge2 || sequence[2] != edge1 {
+		t.Fatalf("unexpected edge rotation sequence %#v", sequence)
+	}
+	if retries := serviceInstance.connectionState(0).retries; retries != 2 {
+		t.Fatalf("expected two recorded retries, got %d", retries)
+	}
+}
