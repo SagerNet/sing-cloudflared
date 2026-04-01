@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -16,6 +18,9 @@ import (
 func TestNewDirectOriginTransportUnix(t *testing.T) {
 	t.Parallel()
 	socketPath := fmt.Sprintf("/tmp/cf-origin-%d.sock", time.Now().UnixNano())
+	if runtime.GOOS == "windows" {
+		socketPath = filepath.Join(os.TempDir(), fmt.Sprintf("cf-origin-%d.sock", time.Now().UnixNano()))
+	}
 	_ = os.Remove(socketPath)
 	t.Cleanup(func() { _ = os.Remove(socketPath) })
 	listener, err := net.Listen("unix", socketPath)
