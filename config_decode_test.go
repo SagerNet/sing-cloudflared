@@ -3,6 +3,10 @@ package cloudflared
 import (
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-cloudflared/internal/control"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing-cloudflared/internal/transport"
 )
 
 func TestNewServiceRequiresToken(t *testing.T) {
@@ -15,35 +19,35 @@ func TestNewServiceRequiresToken(t *testing.T) {
 
 func TestValidateRegistrationResultRejectsNonRemoteManaged(t *testing.T) {
 	t.Parallel()
-	err := validateRegistrationResult(&RegistrationResult{TunnelIsRemotelyManaged: false})
+	err := control.ValidateRegistrationResult(&protocol.RegistrationResult{TunnelIsRemotelyManaged: false})
 	if err == nil {
 		t.Fatal("expected unsupported tunnel error")
 	}
-	if err != ErrNonRemoteManagedTunnelUnsupported {
+	if err != control.ErrNonRemoteManagedTunnelUnsupported {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestNormalizeProtocolAutoUsesTokenStyleSentinel(t *testing.T) {
 	t.Parallel()
-	protocol, err := normalizeProtocol("auto")
+	normalizedProtocol, err := transport.NormalizeProtocol("auto")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protocol != "" {
-		t.Fatalf("expected auto protocol to normalize to token-style empty sentinel, got %q", protocol)
+	if normalizedProtocol != "" {
+		t.Fatalf("expected auto protocol to normalize to token-style empty sentinel, got %q", normalizedProtocol)
 	}
 }
 
 func TestNormalizeProtocolH2MUXUsesHTTP2(t *testing.T) {
 	t.Parallel()
 
-	protocol, err := normalizeProtocol(protocolH2MUX)
+	normalizedProtocol, err := transport.NormalizeProtocol(transport.ProtocolH2MUX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protocol != protocolHTTP2 {
-		t.Fatalf("expected h2mux to normalize to http2, got %q", protocol)
+	if normalizedProtocol != transport.ProtocolHTTP2 {
+		t.Fatalf("expected h2mux to normalize to http2, got %q", normalizedProtocol)
 	}
 }
 
@@ -52,7 +56,7 @@ func TestNewServiceRejectsPostQuantumWithHTTP2(t *testing.T) {
 
 	_, err := NewService(ServiceOptions{
 		Token:       testToken(t),
-		Protocol:    protocolHTTP2,
+		Protocol:    transport.ProtocolHTTP2,
 		PostQuantum: true,
 	})
 	if err == nil || err.Error() != "post-quantum is only supported with quic transport" {
@@ -71,7 +75,7 @@ func TestNewServiceAutoPostQuantumUsesQUICOnlySelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.currentProtocol() != protocolQUIC {
+	if service.currentProtocol() != transport.ProtocolQUIC {
 		t.Fatalf("unexpected current protocol %q", service.currentProtocol())
 	}
 	if fallback, ok := service.fallbackProtocol(); ok {

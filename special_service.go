@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing-cloudflared/internal/transport"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -30,7 +33,7 @@ const (
 	socksReplyCommandNotSupported = 7
 )
 
-func (s *Service) handleBastionStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
+func (s *Service) handleBastionStream(ctx context.Context, stream io.ReadWriteCloser, respWriter protocol.ConnectResponseWriter, request *protocol.ConnectRequest, service config.ResolvedService) {
 	destination, err := resolveBastionDestination(request)
 	if err != nil {
 		respWriter.WriteResponse(err, nil)
@@ -39,7 +42,7 @@ func (s *Service) handleBastionStream(ctx context.Context, stream io.ReadWriteCl
 	s.handleRouterBackedStream(ctx, stream, respWriter, request, M.ParseSocksaddr(destination), service.OriginRequest.ProxyType)
 }
 
-func (s *Service) handleStreamService(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
+func (s *Service) handleStreamService(ctx context.Context, stream io.ReadWriteCloser, respWriter protocol.ConnectResponseWriter, request *protocol.ConnectRequest, service config.ResolvedService) {
 	if !service.StreamHasPort {
 		respWriter.WriteResponse(E.New("address ", streamServiceHostname(service), ": missing port in address"), nil)
 		return
@@ -47,7 +50,7 @@ func (s *Service) handleStreamService(ctx context.Context, stream io.ReadWriteCl
 	s.handleRouterBackedStream(ctx, stream, respWriter, request, service.Destination, service.OriginRequest.ProxyType)
 }
 
-func (s *Service) handleRouterBackedStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, destination M.Socksaddr, proxyType string) {
+func (s *Service) handleRouterBackedStream(ctx context.Context, stream io.ReadWriteCloser, respWriter protocol.ConnectResponseWriter, request *protocol.ConnectRequest, destination M.Socksaddr, proxyType string) {
 	targetConn, cleanup, err := s.dialRouterTCP(ctx, destination)
 	if err != nil {
 		respWriter.WriteResponse(err, nil)
@@ -61,7 +64,7 @@ func (s *Service) handleRouterBackedStream(ctx context.Context, stream io.ReadWr
 		return
 	}
 
-	wsConn := newWebsocketConn(newStreamConn(stream), ws.StateServerSide)
+	wsConn := transport.NewWebsocketConn(newStreamConn(stream), ws.StateServerSide)
 	defer wsConn.Close()
 	if isSocksProxyType(proxyType) {
 		err = serveFixedSocksStream(ctx, wsConn, targetConn)
@@ -73,14 +76,14 @@ func (s *Service) handleRouterBackedStream(ctx context.Context, stream io.ReadWr
 	_ = bufio.CopyConn(ctx, wsConn, targetConn)
 }
 
-func (s *Service) handleSocksProxyStream(ctx context.Context, stream io.ReadWriteCloser, respWriter ConnectResponseWriter, request *ConnectRequest, service ResolvedService) {
+func (s *Service) handleSocksProxyStream(ctx context.Context, stream io.ReadWriteCloser, respWriter protocol.ConnectResponseWriter, request *protocol.ConnectRequest, service config.ResolvedService) {
 	err := respWriter.WriteResponse(nil, encodeResponseHeaders(http.StatusSwitchingProtocols, websocketResponseHeaders(request)))
 	if err != nil {
 		s.logger.ErrorContext(ctx, "write socks-proxy websocket response: ", err)
 		return
 	}
 
-	wsConn := newWebsocketConn(newStreamConn(stream), ws.StateServerSide)
+	wsConn := transport.NewWebsocketConn(newStreamConn(stream), ws.StateServerSide)
 	defer wsConn.Close()
 	err = s.serveSocksProxy(ctx, wsConn, service.SocksPolicy)
 	if err != nil && !E.IsClosedOrCanceled(err) {
@@ -88,7 +91,7 @@ func (s *Service) handleSocksProxyStream(ctx context.Context, stream io.ReadWrit
 	}
 }
 
-func resolveBastionDestination(request *ConnectRequest) (string, error) {
+func resolveBastionDestination(request *protocol.ConnectRequest) (string, error) {
 	headerValue := requestHeaderValue(request, "Cf-Access-Jump-Destination")
 	if headerValue == "" {
 		return "", E.New("missing Cf-Access-Jump-Destination header")
@@ -100,7 +103,7 @@ func resolveBastionDestination(request *ConnectRequest) (string, error) {
 	return strings.SplitN(headerValue, "/", 2)[0], nil
 }
 
-func websocketResponseHeaders(request *ConnectRequest) http.Header {
+func websocketResponseHeaders(request *protocol.ConnectRequest) http.Header {
 	header := http.Header{}
 	header.Set("Connection", "Upgrade")
 	header.Set("Upgrade", "websocket")
@@ -129,12 +132,12 @@ func serveFixedSocksStream(ctx context.Context, conn net.Conn, targetConn net.Co
 	return bufio.CopyConn(ctx, conn, targetConn)
 }
 
-func requestHeaderValue(request *ConnectRequest, headerName string) string {
+func requestHeaderValue(request *protocol.ConnectRequest, headerName string) string {
 	for _, entry := range request.Metadata {
-		if !strings.HasPrefix(entry.Key, metadataHTTPHeaderPrefix) {
+		if !strings.HasPrefix(entry.Key, protocol.MetadataHTTPHeaderPrefix) {
 			continue
 		}
-		name := strings.TrimPrefix(entry.Key, metadataHTTPHeaderPrefix)
+		name := strings.TrimPrefix(entry.Key, protocol.MetadataHTTPHeaderPrefix)
 		if strings.EqualFold(name, headerName) {
 			return entry.Val
 		}
@@ -142,7 +145,7 @@ func requestHeaderValue(request *ConnectRequest, headerName string) string {
 	return ""
 }
 
-func streamServiceHostname(service ResolvedService) string {
+func streamServiceHostname(service config.ResolvedService) string {
 	if service.BaseURL != nil && service.BaseURL.Hostname() != "" {
 		return service.BaseURL.Hostname()
 	}
@@ -157,7 +160,7 @@ func (s *Service) dialRouterTCP(ctx context.Context, destination M.Socksaddr) (n
 	return s.dialRouterTCPWithMetadata(ctx, destination, routedPipeTCPOptions{})
 }
 
-func (s *Service) serveSocksProxy(ctx context.Context, conn net.Conn, policy *ipRulePolicy) error {
+func (s *Service) serveSocksProxy(ctx context.Context, conn net.Conn, policy *config.IPRulePolicy) error {
 	destination, err := readSocksHandshake(conn)
 	if err != nil {
 		return err

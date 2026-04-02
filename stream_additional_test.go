@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/sagernet/sing-cloudflared/tunnelrpc"
+	"github.com/sagernet/sing-cloudflared/internal/tunnelrpc"
 
 	capnp "zombiezen.com/go/capnproto2"
 	"zombiezen.com/go/capnproto2/pogs"

@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
+	"github.com/sagernet/sing-cloudflared/internal/datagram"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing-cloudflared/internal/transport"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -37,14 +41,14 @@ func testToken(t *testing.T) string {
 	return base64.StdEncoding.EncodeToString([]byte(tokenJSON))
 }
 
-func newTestService(t *testing.T, token string, protocol string, haConnections int) *Service {
+func newTestService(t *testing.T, token string, testProtocol string, haConnections int) *Service {
 	t.Helper()
 	credentials, err := parseToken(token)
 	if err != nil {
 		t.Fatal("parse token: ", err)
 	}
 
-	configManager, err := NewConfigManager()
+	configManager, err := config.NewConfigManager()
 	if err != nil {
 		t.Fatal("create config manager: ", err)
 	}
@@ -58,15 +62,16 @@ func newTestService(t *testing.T, token string, protocol string, haConnections i
 		credentials:       credentials,
 		connectorID:       uuid.New(),
 		haConnections:     haConnections,
-		protocol:          protocol,
+		protocol:          testProtocol,
 		edgeIPVersion:     0,
 		datagramVersion:   "",
-		featureSelector:   newFeatureSelector(ctx, credentials.AccountTag, ""),
+		featureSelector:   transport.NewFeatureSelector(ctx, credentials.AccountTag, ""),
 		gracePeriod:       5 * time.Second,
 		configManager:     configManager,
-		datagramV2Muxers:  make(map[DatagramSender]*DatagramV2Muxer),
-		datagramV3Muxers:  make(map[DatagramSender]*DatagramV3Muxer),
-		datagramV3Manager: NewDatagramV3SessionManager(),
+		flowLimiter:       &datagram.FlowLimiter{},
+		datagramV2Muxers:  make(map[protocol.DatagramSender]*datagram.DatagramV2Muxer),
+		datagramV3Muxers:  make(map[protocol.DatagramSender]*datagram.DatagramV3Muxer),
+		datagramV3Manager: datagram.NewDatagramV3SessionManager(),
 		connectedIndices:  make(map[uint8]struct{}),
 		connectedNotify:   make(chan uint8, haConnections),
 		controlDialer:     N.SystemDialer,

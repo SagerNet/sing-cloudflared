@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/sagernet/sing/common/buf"
@@ -25,7 +24,7 @@ func (c *udpWriteDeadlinePacketConn) WritePacket(buffer *buf.Buffer, destination
 	return c.PacketConn.WritePacket(buffer, destination)
 }
 
-func (s *Service) dialWarpPacketConnection(ctx context.Context, destination netip.AddrPort) (N.PacketConn, error) {
+func (s *Service) dialWarpPacketConnection(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error) {
 	if s.handler == nil {
 		return nil, E.New("handler not configured")
 	}
@@ -37,7 +36,7 @@ func (s *Service) dialWarpPacketConnection(ctx context.Context, destination neti
 		defer cancel()
 	}
 
-	packetConn, err := s.handler.DialPacket(ctx, M.SocksaddrFromNetIP(destination))
+	packetConn, err := s.handler.DialPacket(ctx, destination)
 	if err != nil {
 		return nil, err
 	}

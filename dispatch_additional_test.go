@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/sing-cloudflared/tunnelrpc"
+	"github.com/sagernet/sing-cloudflared/internal/tunnelrpc"
 	"github.com/sagernet/sing/common/logger"
 
 	capnp "zombiezen.com/go/capnproto2"
@@ -43,7 +43,8 @@ func decodeConnectResponseForTest(t *testing.T, payload []byte) *ConnectResponse
 		t.Fatal(err)
 	}
 	var response ConnectResponse
-	if err := pogs.Extract(&response, tunnelrpc.ConnectResponse_TypeID, root.Struct); err != nil {
+	err = pogs.Extract(&response, tunnelrpc.ConnectResponse_TypeID, root.Struct)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return &response
@@ -53,11 +54,7 @@ func TestHandleDataStreamWritesStatusConnectResponse(t *testing.T) {
 	t.Parallel()
 
 	serviceInstance := newSpecialService(t)
-	serviceInstance.configManager.activeConfig = RuntimeConfig{
-		Ingress: []compiledIngressRule{{
-			Service: ResolvedService{Kind: ResolvedServiceStatus, StatusCode: http.StatusNoContent},
-		}},
-	}
+	serviceInstance.configManager.Apply(1, []byte(`{"ingress":[{"service":"http_status:204"}]}`))
 	stream := &captureReadWriteCloser{}
 	request := &ConnectRequest{
 		Type: ConnectionTypeHTTP,
@@ -68,7 +65,7 @@ func TestHandleDataStreamWritesStatusConnectResponse(t *testing.T) {
 		},
 	}
 
-	serviceInstance.HandleDataStream(context.Background(), stream, request, 0)
+	serviceInstance.handleDataStream(context.Background(), stream, request, 0)
 	response := decodeConnectResponseForTest(t, stream.body)
 	if response.Error != "" {
 		t.Fatalf("unexpected connect response error %q", response.Error)
@@ -88,7 +85,7 @@ func TestHandleDataStreamWritesUnknownConnectionTypeError(t *testing.T) {
 		Dest: "ignored",
 	}
 
-	serviceInstance.HandleDataStream(context.Background(), stream, request, 0)
+	serviceInstance.handleDataStream(context.Background(), stream, request, 0)
 	response := decodeConnectResponseForTest(t, stream.body)
 	if response.Error != "unknown connection type: unknown" {
 		t.Fatalf("unexpected connect response error %q", response.Error)
@@ -108,14 +105,14 @@ func TestHandleRPCStreamWithSenderSelectsDatagramVersion(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	serviceInstance.HandleRPCStreamWithSender(ctx, newBlockingRPCStream(), 0, &datagramVersionSender{version: defaultDatagramVersion})
+	serviceInstance.handleRPCStreamWithSender(ctx, newBlockingRPCStream(), 0, &datagramVersionSender{version: defaultDatagramVersion})
 	if len(serviceInstance.datagramV2Muxers) != 1 {
 		t.Fatalf("expected V2 RPC stream to create muxer, got %#v", serviceInstance.datagramV2Muxers)
 	}
 
 	ctxV3, cancelV3 := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelV3()
-	serviceInstance.HandleRPCStreamWithSender(ctxV3, newBlockingRPCStream(), 0, &datagramVersionSender{version: datagramVersionV3})
+	serviceInstance.handleRPCStreamWithSender(ctxV3, newBlockingRPCStream(), 0, &datagramVersionSender{version: datagramVersionV3})
 	if len(serviceInstance.datagramV3Muxers) != 0 {
 		t.Fatalf("expected V3 RPC stream not to create V2/V3 muxers directly, got %#v", serviceInstance.datagramV3Muxers)
 	}
@@ -130,14 +127,14 @@ func TestHandleDatagramCreatesMuxersAndRemoveDatagramMuxer(t *testing.T) {
 	v2Sender := &datagramVersionSender{version: defaultDatagramVersion}
 	v3Sender := &datagramVersionSender{version: datagramVersionV3}
 
-	serviceInstance.HandleDatagram(context.Background(), []byte{}, v2Sender)
-	serviceInstance.HandleDatagram(context.Background(), []byte{byte(DatagramV3TypeRegistrationResponse)}, v3Sender)
+	serviceInstance.handleDatagram(context.Background(), []byte{}, v2Sender)
+	serviceInstance.handleDatagram(context.Background(), []byte{byte(DatagramV3TypeRegistrationResponse)}, v3Sender)
 	if len(serviceInstance.datagramV2Muxers) != 1 || len(serviceInstance.datagramV3Muxers) != 1 {
 		t.Fatalf("unexpected muxer counts v2=%d v3=%d", len(serviceInstance.datagramV2Muxers), len(serviceInstance.datagramV3Muxers))
 	}
 
-	serviceInstance.RemoveDatagramMuxer(v2Sender)
-	serviceInstance.RemoveDatagramMuxer(v3Sender)
+	serviceInstance.removeDatagramMuxer(v2Sender)
+	serviceInstance.removeDatagramMuxer(v3Sender)
 	if len(serviceInstance.datagramV2Muxers) != 0 || len(serviceInstance.datagramV3Muxers) != 0 {
 		t.Fatalf("expected muxers to be removed, got v2=%d v3=%d", len(serviceInstance.datagramV2Muxers), len(serviceInstance.datagramV3Muxers))
 	}
@@ -157,13 +154,16 @@ func TestDatagramVersionForSenderAndStreamConn(t *testing.T) {
 	if conn.LocalAddr() != nil || conn.RemoteAddr() != nil {
 		t.Fatal("expected nil stream conn addresses")
 	}
-	if err := conn.SetDeadline(time.Now()); err != nil {
+	err := conn.SetDeadline(time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.SetReadDeadline(time.Now()); err != nil {
+	err = conn.SetReadDeadline(time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.SetWriteDeadline(time.Now()); err != nil {
+	err = conn.SetWriteDeadline(time.Now())
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -173,11 +173,12 @@ func TestHandleRPCStreamAndQuicResponseWriter(t *testing.T) {
 
 	serviceInstance := newLimitedService(t, 0)
 	serviceInstance.logger = logger.NOP()
-	serviceInstance.HandleRPCStream(context.Background(), newBlockingRPCStream(), 0)
+	serviceInstance.handleRPCStream(context.Background(), newBlockingRPCStream(), 0)
 
 	stream := &captureReadWriteCloser{}
 	writer := &quicResponseWriter{stream: stream}
-	if err := writer.WriteResponse(io.EOF, nil); err != nil {
+	err := writer.WriteResponse(io.EOF, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	response := decodeConnectResponseForTest(t, stream.body)

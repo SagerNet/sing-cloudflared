@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -29,13 +31,14 @@ func newAccessTestService(t *testing.T) *Service {
 	}
 }
 
-func TestValidateAccessConfiguration(t *testing.T) {
+func TestValidateAccessConfigurationViaApply(t *testing.T) {
 	t.Parallel()
-	err := validateAccessConfiguration(AccessConfig{
-		Required: true,
-		AudTag:   []string{"aud"},
-	})
-	if err == nil {
+	configManager, err := config.NewConfigManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := configManager.Apply(1, []byte(`{"ingress":[{"service":"http_status:200","originRequest":{"access":{"required":true,"audTag":["aud"]}}}]}`))
+	if result.Err == nil {
 		t.Fatal("expected access config validation error")
 	}
 }
@@ -85,25 +88,25 @@ func TestRoundTripHTTPAccessDenied(t *testing.T) {
 	defer func() {
 		newAccessValidator = originalFactory
 	}()
-	newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+	newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 		return &fakeAccessValidator{err: E.New("forbidden")}, nil
 	}
 
 	serviceInstance := newAccessTestService(t)
 	respWriter := &fakeConnectResponseWriter{}
-	request := &ConnectRequest{
-		Type: ConnectionTypeHTTP,
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeHTTP,
 		Dest: "http://127.0.0.1:8083/test",
-		Metadata: []Metadata{
-			{Key: metadataHTTPMethod, Val: http.MethodGet},
-			{Key: metadataHTTPHost, Val: "example.com"},
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPMethod, Val: http.MethodGet},
+			{Key: protocol.MetadataHTTPHost, Val: "example.com"},
 		},
 	}
-	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, ResolvedService{
-		Kind:        ResolvedServiceHTTP,
+	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, config.ResolvedService{
+		Kind:        config.ResolvedServiceHTTP,
 		Destination: M.ParseSocksaddr("127.0.0.1:8083"),
-		OriginRequest: OriginRequestConfig{
-			Access: AccessConfig{
+		OriginRequest: config.OriginRequestConfig{
+			Access: config.AccessConfig{
 				Required: true,
 				TeamName: "team",
 			},
@@ -120,24 +123,24 @@ func TestHandleHTTPServiceStatusAccessDenied(t *testing.T) {
 	defer func() {
 		newAccessValidator = originalFactory
 	}()
-	newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+	newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 		return &fakeAccessValidator{err: E.New("forbidden")}, nil
 	}
 
 	serviceInstance := newAccessTestService(t)
 	respWriter := &fakeConnectResponseWriter{}
-	request := &ConnectRequest{
-		Type: ConnectionTypeHTTP,
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeHTTP,
 		Dest: "https://example.com/status",
-		Metadata: []Metadata{
-			{Key: metadataHTTPMethod, Val: http.MethodGet},
-			{Key: metadataHTTPHost, Val: "example.com"},
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPMethod, Val: http.MethodGet},
+			{Key: protocol.MetadataHTTPHost, Val: "example.com"},
 		},
 	}
-	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, ResolvedService{
-		Kind: ResolvedServiceStatus,
-		OriginRequest: OriginRequestConfig{
-			Access: AccessConfig{
+	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, config.ResolvedService{
+		Kind: config.ResolvedServiceStatus,
+		OriginRequest: config.OriginRequestConfig{
+			Access: config.AccessConfig{
 				Required: true,
 				TeamName: "team",
 			},
@@ -155,26 +158,26 @@ func TestHandleHTTPServiceStreamAccessDenied(t *testing.T) {
 	defer func() {
 		newAccessValidator = originalFactory
 	}()
-	newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+	newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 		return &fakeAccessValidator{err: E.New("forbidden")}, nil
 	}
 
 	serviceInstance := newAccessTestService(t)
 	respWriter := &fakeConnectResponseWriter{}
-	request := &ConnectRequest{
-		Type: ConnectionTypeWebsocket,
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeWebsocket,
 		Dest: "https://example.com/ws",
-		Metadata: []Metadata{
-			{Key: metadataHTTPMethod, Val: http.MethodGet},
-			{Key: metadataHTTPHost, Val: "example.com"},
-			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPMethod, Val: http.MethodGet},
+			{Key: protocol.MetadataHTTPHost, Val: "example.com"},
+			{Key: protocol.MetadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
 		},
 	}
-	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, ResolvedService{
-		Kind:        ResolvedServiceStream,
+	serviceInstance.handleHTTPService(context.Background(), nil, respWriter, request, config.ResolvedService{
+		Kind:        config.ResolvedServiceStream,
 		Destination: M.ParseSocksaddr("127.0.0.1:8080"),
-		OriginRequest: OriginRequestConfig{
-			Access: AccessConfig{
+		OriginRequest: config.OriginRequestConfig{
+			Access: config.AccessConfig{
 				Required: true,
 				TeamName: "team",
 			},

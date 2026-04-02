@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
+	"github.com/sagernet/sing-cloudflared/internal/datagram"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -26,16 +29,16 @@ type fakeConnectResponseWriter struct {
 	done    chan struct{}
 }
 
-func (w *fakeConnectResponseWriter) WriteResponse(responseError error, metadata []Metadata) error {
+func (w *fakeConnectResponseWriter) WriteResponse(responseError error, metadata []protocol.Metadata) error {
 	w.err = responseError
 	w.headers = make(http.Header)
 	for _, entry := range metadata {
 		switch {
-		case entry.Key == metadataHTTPStatus:
+		case entry.Key == protocol.MetadataHTTPStatus:
 			status, _ := strconv.Atoi(entry.Val)
 			w.status = status
-		case len(entry.Key) > len(metadataHTTPHeader)+1 && entry.Key[:len(metadataHTTPHeader)+1] == metadataHTTPHeader+":":
-			w.headers.Add(entry.Key[len(metadataHTTPHeader)+1:], entry.Val)
+		case len(entry.Key) > len(protocol.MetadataHTTPHeader)+1 && entry.Key[:len(protocol.MetadataHTTPHeader)+1] == protocol.MetadataHTTPHeader+":":
+			w.headers.Add(entry.Key[len(protocol.MetadataHTTPHeader)+1:], entry.Val)
 		}
 	}
 	if w.done != nil {
@@ -51,7 +54,7 @@ func newSpecialService(t *testing.T) *Service {
 
 func newSpecialServiceWithHandler(t *testing.T, handler Handler) *Service {
 	t.Helper()
-	configManager, err := NewConfigManager()
+	configManager, err := config.NewConfigManager()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +62,7 @@ func newSpecialServiceWithHandler(t *testing.T, handler Handler) *Service {
 		handler:       handler,
 		logger:        logger.NOP(),
 		configManager: configManager,
-		flowLimiter:   &FlowLimiter{},
+		flowLimiter:   &datagram.FlowLimiter{},
 	}
 }
 
@@ -94,25 +97,50 @@ func startEchoListener(t *testing.T) net.Listener {
 	return listener
 }
 
-func newSocksProxyService(t *testing.T, rules []IPRule) ResolvedService {
+func newSocksProxyService(t *testing.T, rules []config.IPRule) config.ResolvedService {
 	t.Helper()
-	service, err := parseResolvedService("socks-proxy", OriginRequestConfig{IPRules: rules})
+	configManager, err := config.NewConfigManager()
 	if err != nil {
 		t.Fatal(err)
+	}
+	rulesJSON := "["
+	for i, rule := range rules {
+		if i > 0 {
+			rulesJSON += ","
+		}
+		portsJSON := "["
+		for j, port := range rule.Ports {
+			if j > 0 {
+				portsJSON += ","
+			}
+			portsJSON += strconv.Itoa(port)
+		}
+		portsJSON += "]"
+		rulesJSON += `{"prefix":"` + rule.Prefix + `","ports":` + portsJSON + `,"allow":` + strconv.FormatBool(rule.Allow) + `}`
+	}
+	rulesJSON += "]"
+	configJSON := `{"ingress":[{"hostname":"*","service":"socks-proxy","originRequest":{"ipRules":` + rulesJSON + `}}]}`
+	result := configManager.Apply(1, []byte(configJSON))
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	service, loaded := configManager.Resolve("anything", "/")
+	if !loaded {
+		t.Fatal("expected socks-proxy service to resolve")
 	}
 	return service
 }
 
-func newSocksProxyConnectRequest() *ConnectRequest {
-	return &ConnectRequest{
-		Type: ConnectionTypeWebsocket,
-		Metadata: []Metadata{
-			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+func newSocksProxyConnectRequest() *protocol.ConnectRequest {
+	return &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeWebsocket,
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
 		},
 	}
 }
 
-func startSocksProxyStream(t *testing.T, serviceInstance *Service, service ResolvedService) (net.Conn, <-chan struct{}) {
+func startSocksProxyStream(t *testing.T, serviceInstance *Service, service config.ResolvedService) (net.Conn, <-chan struct{}) {
 	t.Helper()
 	serverSide, clientSide := net.Pipe()
 	respWriter := &fakeConnectResponseWriter{done: make(chan struct{})}
@@ -220,11 +248,11 @@ func TestHandleBastionStream(t *testing.T) {
 	defer clientSide.Close()
 
 	serviceInstance := newSpecialService(t)
-	request := &ConnectRequest{
-		Type: ConnectionTypeWebsocket,
-		Metadata: []Metadata{
-			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
-			{Key: metadataHTTPHeader + ":Cf-Access-Jump-Destination", Val: listener.Addr().String()},
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeWebsocket,
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+			{Key: protocol.MetadataHTTPHeader + ":Cf-Access-Jump-Destination", Val: listener.Addr().String()},
 		},
 	}
 	respWriter := &fakeConnectResponseWriter{done: make(chan struct{})}
@@ -232,7 +260,7 @@ func TestHandleBastionStream(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		serviceInstance.handleBastionStream(context.Background(), serverSide, respWriter, request, ResolvedService{})
+		serviceInstance.handleBastionStream(context.Background(), serverSide, respWriter, request, config.ResolvedService{})
 	}()
 
 	select {
@@ -278,7 +306,7 @@ func TestHandleSocksProxyStream(t *testing.T) {
 
 	_, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
-	service := newSocksProxyService(t, []IPRule{{
+	service := newSocksProxyService(t, []config.IPRule{{
 		Prefix: "127.0.0.0/8",
 		Ports:  []int{port},
 		Allow:  true,
@@ -318,7 +346,7 @@ func TestHandleSocksProxyStreamDenyRule(t *testing.T) {
 
 	_, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
-	service := newSocksProxyService(t, []IPRule{{
+	service := newSocksProxyService(t, []config.IPRule{{
 		Prefix: "127.0.0.0/8",
 		Ports:  []int{port},
 		Allow:  false,
@@ -350,7 +378,7 @@ func TestHandleSocksProxyStreamPortMismatchDefaultDeny(t *testing.T) {
 
 	_, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
-	service := newSocksProxyService(t, []IPRule{{
+	service := newSocksProxyService(t, []config.IPRule{{
 		Prefix: "127.0.0.0/8",
 		Ports:  []int{port + 1},
 		Allow:  true,
@@ -409,10 +437,10 @@ func TestHandleStreamService(t *testing.T) {
 	defer clientSide.Close()
 
 	serviceInstance := newSpecialService(t)
-	request := &ConnectRequest{
-		Type: ConnectionTypeWebsocket,
-		Metadata: []Metadata{
-			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeWebsocket,
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
 		},
 	}
 	respWriter := &fakeConnectResponseWriter{done: make(chan struct{})}
@@ -420,8 +448,8 @@ func TestHandleStreamService(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		serviceInstance.handleStreamService(context.Background(), serverSide, respWriter, request, ResolvedService{
-			Kind:          ResolvedServiceStream,
+		serviceInstance.handleStreamService(context.Background(), serverSide, respWriter, request, config.ResolvedService{
+			Kind:          config.ResolvedServiceStream,
 			Destination:   M.ParseSocksaddr(listener.Addr().String()),
 			StreamHasPort: true,
 		})
@@ -468,16 +496,16 @@ func TestHandleStreamServiceGenericSchemeWithoutPort(t *testing.T) {
 
 	handler := &countingHandler{}
 	serviceInstance := newSpecialServiceWithHandler(t, handler)
-	request := &ConnectRequest{
-		Type: ConnectionTypeWebsocket,
-		Metadata: []Metadata{
-			{Key: metadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
+	request := &protocol.ConnectRequest{
+		Type: protocol.ConnectionTypeWebsocket,
+		Metadata: []protocol.Metadata{
+			{Key: protocol.MetadataHTTPHeader + ":Sec-WebSocket-Key", Val: "dGhlIHNhbXBsZSBub25jZQ=="},
 		},
 	}
 	respWriter := &fakeConnectResponseWriter{done: make(chan struct{})}
 
-	serviceInstance.handleStreamService(context.Background(), serverSide, respWriter, request, ResolvedService{
-		Kind:          ResolvedServiceStream,
+	serviceInstance.handleStreamService(context.Background(), serverSide, respWriter, request, config.ResolvedService{
+		Kind:          config.ResolvedServiceStream,
 		Service:       "ftp://127.0.0.1",
 		Destination:   M.ParseSocksaddrHostPort("127.0.0.1", 0),
 		StreamHasPort: false,

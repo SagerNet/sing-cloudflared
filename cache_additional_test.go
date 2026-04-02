@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -21,7 +22,7 @@ func TestAccessValidatorCacheReturnsExistingValueWhenConcurrentStoreWins(t *test
 	releaseFirstBuild := make(chan struct{})
 	cachedValidator := &fakeAccessValidator{}
 	firstBuiltValidator := &fakeAccessValidator{}
-	newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+	newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 		if buildCount.Add(1) == 1 {
 			close(firstBuildStarted)
 			<-releaseFirstBuild
@@ -31,7 +32,7 @@ func TestAccessValidatorCacheReturnsExistingValueWhenConcurrentStoreWins(t *test
 	}
 
 	cache := &accessValidatorCache{values: make(map[string]accessValidator)}
-	config := AccessConfig{Required: true, TeamName: "team", AudTag: []string{"aud"}}
+	config := config.AccessConfig{Required: true, TeamName: "team", AudTag: []string{"aud"}}
 
 	firstResultCh := make(chan accessValidator, 1)
 	firstErrCh := make(chan error, 1)
@@ -83,8 +84,8 @@ func TestNewDirectOriginTransportReturnsExistingValueWhenConcurrentStoreWins(t *
 	serviceInstance := &Service{
 		directTransports: make(map[string]*http.Transport),
 	}
-	service := ResolvedService{
-		Kind:     ResolvedServiceUnix,
+	service := config.ResolvedService{
+		Kind:     config.ResolvedServiceUnix,
 		UnixPath: "/tmp/test.sock",
 		BaseURL:  &url.URL{Scheme: "http", Host: "localhost"},
 	}

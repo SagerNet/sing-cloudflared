@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -16,7 +17,7 @@ import (
 
 const accessJWTAssertionHeader = "Cf-Access-Jwt-Assertion"
 
-var newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+var newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 	issuerURL := accessIssuerURL(access.TeamName, access.Environment)
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -77,17 +78,7 @@ func accessIssuerURL(teamName string, environment string) string {
 	return "https://" + teamName + ".cloudflareaccess.com"
 }
 
-func validateAccessConfiguration(access AccessConfig) error {
-	if !access.Required {
-		return nil
-	}
-	if access.TeamName == "" && len(access.AudTag) > 0 {
-		return E.New("access.team_name cannot be blank when access.aud_tag is present")
-	}
-	return nil
-}
-
-func accessValidatorKey(access AccessConfig) string {
+func accessValidatorKey(access config.AccessConfig) string {
 	return access.TeamName + "|" + access.Environment + "|" + strings.Join(access.AudTag, ",")
 }
 
@@ -97,7 +88,7 @@ type accessValidatorCache struct {
 	dialer N.Dialer
 }
 
-func (c *accessValidatorCache) Get(accessConfig AccessConfig) (accessValidator, error) {
+func (c *accessValidatorCache) Get(accessConfig config.AccessConfig) (accessValidator, error) {
 	key := accessValidatorKey(accessConfig)
 	c.access.RLock()
 	validator, loaded := c.values[key]

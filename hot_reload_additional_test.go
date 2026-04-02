@@ -12,10 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
-	"golang.org/x/net/http2"
 )
 
 type notifyingCaptureStream struct {
@@ -99,8 +97,8 @@ func TestApplyConfigAffectsNewRequestsWithoutInterruptingActiveHTTPResponse(t *t
 	firstChunkWritten := make(chan struct{})
 	releaseOldOrigin := make(chan struct{})
 	oldOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
+		flusher, isFlusher := w.(http.Flusher)
+		if !isFlusher {
 			t.Fatal("expected flusher")
 		}
 		w.WriteHeader(http.StatusOK)
@@ -195,11 +193,12 @@ func TestApplyConfigAffectsNewRequestsWithoutInterruptingActiveWebsocketStream(t
 		defer conn.Close()
 
 		for {
-			payload, opCode, err := wsutil.ReadClientData(conn)
-			if err != nil {
+			payload, opCode, readErr := wsutil.ReadClientData(conn)
+			if readErr != nil {
 				return
 			}
-			if err := wsutil.WriteServerMessage(conn, opCode, append([]byte("old:"), payload...)); err != nil {
+			writeErr := wsutil.WriteServerMessage(conn, opCode, append([]byte("old:"), payload...))
+			if writeErr != nil {
 				return
 			}
 		}
@@ -248,7 +247,8 @@ func TestApplyConfigAffectsNewRequestsWithoutInterruptingActiveWebsocketStream(t
 		t.Fatalf("unexpected websocket response status %d", oldRespWriter.status)
 	}
 
-	if err := wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("one")); err != nil {
+	err = wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("one"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	payload, opCode, err := wsutil.ReadServerData(clientSide)
@@ -282,7 +282,8 @@ func TestApplyConfigAffectsNewRequestsWithoutInterruptingActiveWebsocketStream(t
 		t.Fatalf("unexpected updated response body %q", got)
 	}
 
-	if err := wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("two")); err != nil {
+	err = wsutil.WriteClientMessage(clientSide, ws.OpBinary, []byte("two"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	payload, opCode, err = wsutil.ReadServerData(clientSide)
@@ -298,33 +299,5 @@ func TestApplyConfigAffectsNewRequestsWithoutInterruptingActiveWebsocketStream(t
 	case <-oldDone:
 	case <-time.After(time.Second):
 		t.Fatal("expected original websocket stream to exit")
-	}
-}
-
-func TestHTTP2ServeReturnsErrorWhenEdgeClosesBeforeRegistration(t *testing.T) {
-	t.Parallel()
-
-	serverSide, clientSide := net.Pipe()
-	connection := &HTTP2Connection{
-		conn:    serverSide,
-		server:  &http2.Server{},
-		logger:  logger.NOP(),
-		service: newSpecialService(t),
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- connection.Serve(context.Background())
-	}()
-
-	_ = clientSide.Close()
-
-	select {
-	case err := <-errCh:
-		if err == nil || err.Error() != "edge connection closed before registration" {
-			t.Fatalf("unexpected serve error %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected Serve to return after edge close")
 	}
 }

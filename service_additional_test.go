@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/logger"
+	N "github.com/sagernet/sing/common/network"
+
+	"github.com/google/uuid"
 )
 
 type closeCounter struct {
@@ -39,6 +40,7 @@ func TestServiceStartCapsHAConnectionsAndStopsCleanly(t *testing.T) {
 			{TCP: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 7844}, UDP: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 7844}, IPVersion: 4},
 		}}, nil
 	}
+	var capturedCallbacks []func()
 	newQUICConnection = func(
 		ctx context.Context,
 		edgeAddr *EdgeAddr,
@@ -53,24 +55,30 @@ func TestServiceStartCapsHAConnectionsAndStopsCleanly(t *testing.T) {
 		onConnected func(),
 		log logger.ContextLogger,
 	) (*QUICConnection, error) {
-		return &QUICConnection{onConnected: onConnected}, nil
+		capturedCallbacks = append(capturedCallbacks, onConnected)
+		return &QUICConnection{}, nil
 	}
 	serveQUICConnection = func(connection *QUICConnection, ctx context.Context, handler StreamHandler) error {
-		if connection.onConnected != nil {
-			connection.onConnected()
+		if len(capturedCallbacks) > 0 {
+			callback := capturedCallbacks[len(capturedCallbacks)-1]
+			if callback != nil {
+				callback()
+			}
 		}
 		<-ctx.Done()
 		return ctx.Err()
 	}
 
 	serviceInstance := newTestService(t, testToken(t), protocolQUIC, 4)
-	if err := serviceInstance.Start(); err != nil {
+	err := serviceInstance.Start()
+	if err != nil {
 		t.Fatal(err)
 	}
 	if serviceInstance.haConnections != 2 {
 		t.Fatalf("expected HA connections to be capped to 2, got %d", serviceInstance.haConnections)
 	}
-	if err := serviceInstance.Close(); err != nil {
+	err = serviceInstance.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -98,7 +106,8 @@ func TestServiceCloseClosesTrackedConnections(t *testing.T) {
 	first := &closeCounter{}
 	second := &closeCounter{}
 	serviceInstance.connections = []io.Closer{first, second}
-	if err := serviceInstance.Close(); err != nil {
+	err := serviceInstance.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 	if first.count != 1 || second.count != 1 {
@@ -110,9 +119,9 @@ func TestConnectionRetryDecisionCases(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		err        error
-		retry      bool
-		cancelAll  bool
+		err       error
+		retry     bool
+		cancelAll bool
 	}{
 		{err: nil, retry: false, cancelAll: false},
 		{err: ErrNonRemoteManagedTunnelUnsupported, retry: false, cancelAll: true},
@@ -158,8 +167,8 @@ func TestContextWithNewIDRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	ctx := contextWithNewID(context.Background())
-	id, ok := ContextIDFrom(ctx)
-	if !ok || id.ID == 0 || id.CreatedAt.IsZero() {
-		t.Fatalf("expected context id, got %#v loaded=%v", id, ok)
+	id, loaded := ContextIDFrom(ctx)
+	if !loaded || id.ID == 0 || id.CreatedAt.IsZero() {
+		t.Fatalf("expected context id, got %#v loaded=%v", id, loaded)
 	}
 }

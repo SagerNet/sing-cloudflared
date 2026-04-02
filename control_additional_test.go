@@ -3,14 +3,16 @@ package cloudflared
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"runtime"
 	"testing"
 	"time"
 
-	"github.com/sagernet/sing-cloudflared/tunnelrpc"
+	"github.com/sagernet/sing-cloudflared/internal/config"
+	"github.com/sagernet/sing-cloudflared/internal/control"
+	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing-cloudflared/internal/tunnelrpc"
 
 	"github.com/google/uuid"
 	"github.com/sagernet/sing/common/logger"
@@ -19,17 +21,17 @@ import (
 )
 
 type registrationCall struct {
-	auth      RegistrationTunnelAuth
+	auth      protocol.RegistrationTunnelAuth
 	tunnelID  uuid.UUID
 	connIndex uint8
-	options   RegistrationConnectionOptions
+	options   protocol.RegistrationConnectionOptions
 }
 
 type registrationTestServer struct {
 	registerCalls chan registrationCall
 	unregisterCh  chan struct{}
 
-	result      *RegistrationResult
+	result      *protocol.RegistrationResult
 	retryAfter  time.Duration
 	registerErr error
 }
@@ -39,8 +41,9 @@ func (s *registrationTestServer) RegisterConnection(call tunnelrpc.RegistrationS
 	if err != nil {
 		return err
 	}
-	var auth RegistrationTunnelAuth
-	if err := pogs.Extract(&auth, tunnelrpc.TunnelAuth_TypeID, authStruct.Struct); err != nil {
+	var auth protocol.RegistrationTunnelAuth
+	err = pogs.Extract(&auth, tunnelrpc.TunnelAuth_TypeID, authStruct.Struct)
+	if err != nil {
 		return err
 	}
 
@@ -57,8 +60,9 @@ func (s *registrationTestServer) RegisterConnection(call tunnelrpc.RegistrationS
 	if err != nil {
 		return err
 	}
-	var options RegistrationConnectionOptions
-	if err := pogs.Extract(&options, tunnelrpc.ConnectionOptions_TypeID, optionsStruct.Struct); err != nil {
+	var options protocol.RegistrationConnectionOptions
+	err = pogs.Extract(&options, tunnelrpc.ConnectionOptions_TypeID, optionsStruct.Struct)
+	if err != nil {
 		return err
 	}
 
@@ -78,7 +82,8 @@ func (s *registrationTestServer) RegisterConnection(call tunnelrpc.RegistrationS
 		if err != nil {
 			return err
 		}
-		if err := resultErr.SetCause(s.registerErr.Error()); err != nil {
+		err = resultErr.SetCause(s.registerErr.Error())
+		if err != nil {
 			return err
 		}
 		resultErr.SetShouldRetry(s.retryAfter > 0)
@@ -91,10 +96,12 @@ func (s *registrationTestServer) RegisterConnection(call tunnelrpc.RegistrationS
 		return err
 	}
 	if s.result != nil {
-		if err := connectionDetails.SetUuid(s.result.ConnectionID[:]); err != nil {
+		err = connectionDetails.SetUuid(s.result.ConnectionID[:])
+		if err != nil {
 			return err
 		}
-		if err := connectionDetails.SetLocationName(s.result.Location); err != nil {
+		err = connectionDetails.SetLocationName(s.result.Location)
+		if err != nil {
 			return err
 		}
 		connectionDetails.SetTunnelIsRemotelyManaged(s.result.TunnelIsRemotelyManaged)
@@ -111,13 +118,13 @@ func (s *registrationTestServer) UpdateLocalConfiguration(call tunnelrpc.Registr
 	return nil
 }
 
-func newRegistrationRPCClient(t *testing.T, server tunnelrpc.RegistrationServer_Server) (*RegistrationClient, func()) {
+func newRegistrationRPCClient(t *testing.T, server tunnelrpc.RegistrationServer_Server) (control.RegistrationRPCClient, func()) {
 	t.Helper()
 
 	serverSide, clientSide := net.Pipe()
-	serverTransport := safeTransport(serverSide)
-	serverConn := newRPCServerConn(serverTransport, tunnelrpc.RegistrationServer_ServerToClient(server).Client)
-	client := NewRegistrationClient(context.Background(), clientSide)
+	serverTransport := control.SafeTransport(serverSide)
+	serverConn := control.NewRPCServerConn(serverTransport, tunnelrpc.RegistrationServer_ServerToClient(server).Client)
+	client := control.CreateRegistrationClient(context.Background(), clientSide)
 
 	cleanup := func() {
 		_ = client.Close()
@@ -131,7 +138,7 @@ func newRegistrationRPCClient(t *testing.T, server tunnelrpc.RegistrationServer_
 func TestRegistrationClientRegisterConnectionSuccess(t *testing.T) {
 	t.Parallel()
 
-	expectedResult := &RegistrationResult{
+	expectedResult := &protocol.RegistrationResult{
 		ConnectionID:            uuid.New(),
 		Location:                "HKG",
 		TunnelIsRemotelyManaged: true,
@@ -146,8 +153,8 @@ func TestRegistrationClientRegisterConnectionSuccess(t *testing.T) {
 
 	connectorID := uuid.New()
 	tunnelID := uuid.New()
-	options := BuildConnectionOptions(connectorID, []string{"serialized_headers", "support_datagram_v3_2"}, 2, net.IPv4(127, 0, 0, 1))
-	result, err := client.RegisterConnection(context.Background(), TunnelAuth{
+	options := control.BuildConnectionOptions(connectorID, []string{"serialized_headers", "support_datagram_v3_2"}, 2, net.IPv4(127, 0, 0, 1))
+	result, err := client.RegisterConnection(context.Background(), protocol.TunnelAuth{
 		AccountTag:   "account",
 		TunnelSecret: []byte("secret"),
 	}, tunnelID, 3, options)
@@ -174,7 +181,7 @@ func TestRegistrationClientRegisterConnectionSuccess(t *testing.T) {
 	if !call.options.OriginLocalIP.Equal(net.IPv4(127, 0, 0, 1)) {
 		t.Fatalf("unexpected origin local ip %v", call.options.OriginLocalIP)
 	}
-	if got := call.options.Client.Version; got != clientVersion {
+	if got := call.options.Client.Version; got != control.ClientVersion {
 		t.Fatalf("unexpected client version %q", got)
 	}
 	if got := call.options.Client.Arch; got != runtime.GOOS+"_"+runtime.GOARCH {
@@ -200,8 +207,8 @@ func TestRegistrationClientRegisterConnectionRetryableError(t *testing.T) {
 	client, cleanup := newRegistrationRPCClient(t, server)
 	defer cleanup()
 
-	_, err := client.RegisterConnection(context.Background(), TunnelAuth{}, uuid.New(), 0, BuildConnectionOptions(uuid.New(), nil, 0, nil))
-	retryErr, ok := err.(*RetryableError)
+	_, err := client.RegisterConnection(context.Background(), protocol.TunnelAuth{}, uuid.New(), 0, control.BuildConnectionOptions(uuid.New(), nil, 0, nil))
+	retryErr, ok := err.(*protocol.RetryableError)
 	if !ok {
 		t.Fatalf("expected retryable error, got %T %v", err, err)
 	}
@@ -227,8 +234,8 @@ func TestRegistrationClientRegisterConnectionPermanentError(t *testing.T) {
 	client, cleanup := newRegistrationRPCClient(t, server)
 	defer cleanup()
 
-	_, err := client.RegisterConnection(context.Background(), TunnelAuth{}, uuid.New(), 0, BuildConnectionOptions(uuid.New(), nil, 0, nil))
-	permanentErr, ok := err.(*permanentRegistrationError)
+	_, err := client.RegisterConnection(context.Background(), protocol.TunnelAuth{}, uuid.New(), 0, control.BuildConnectionOptions(uuid.New(), nil, 0, nil))
+	permanentErr, ok := err.(*control.PermanentRegistrationError)
 	if !ok {
 		t.Fatalf("expected permanent registration error, got %T %v", err, err)
 	}
@@ -246,12 +253,13 @@ func TestRegistrationClientUnregister(t *testing.T) {
 	server := &registrationTestServer{
 		registerCalls: make(chan registrationCall, 1),
 		unregisterCh:  make(chan struct{}, 1),
-		result:        &RegistrationResult{ConnectionID: uuid.New(), TunnelIsRemotelyManaged: true},
+		result:        &protocol.RegistrationResult{ConnectionID: uuid.New(), TunnelIsRemotelyManaged: true},
 	}
 	client, cleanup := newRegistrationRPCClient(t, server)
 	defer cleanup()
 
-	if err := client.Unregister(context.Background()); err != nil {
+	err := client.Unregister(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -261,104 +269,11 @@ func TestRegistrationClientUnregister(t *testing.T) {
 	}
 }
 
-type temporaryNetError struct{}
-
-func (temporaryNetError) Error() string   { return "temporary" }
-func (temporaryNetError) Temporary() bool { return true }
-
-type scriptedReadWriteCloser struct {
-	results []struct {
-		n   int
-		err error
-	}
-	index int
-}
-
-func (s *scriptedReadWriteCloser) Read(p []byte) (int, error) {
-	if s.index >= len(s.results) {
-		return 0, io.EOF
-	}
-	result := s.results[s.index]
-	s.index++
-	if result.n > 0 {
-		for index := 0; index < result.n && index < len(p); index++ {
-			p[index] = byte('a' + index)
-		}
-	}
-	return result.n, result.err
-}
-
-func (s *scriptedReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
-func (s *scriptedReadWriteCloser) Close() error                { return nil }
-
-func TestSafeReadWriteCloserTemporaryRetryAccounting(t *testing.T) {
-	t.Parallel()
-
-	wrapper := &safeReadWriteCloser{ReadWriteCloser: &scriptedReadWriteCloser{
-		results: []struct {
-			n   int
-			err error
-		}{
-			{err: temporaryNetError{}},
-			{n: 1, err: nil},
-			{err: temporaryNetError{}},
-		},
-	}}
-
-	if _, err := wrapper.Read(make([]byte, 1)); err == nil {
-		t.Fatal("expected temporary error on first read")
-	}
-	if wrapper.retries != 1 {
-		t.Fatalf("unexpected retry count %d", wrapper.retries)
-	}
-
-	if n, err := wrapper.Read(make([]byte, 1)); err != nil || n != 1 {
-		t.Fatalf("unexpected successful read n=%d err=%v", n, err)
-	}
-	if wrapper.retries != 0 {
-		t.Fatalf("expected retries to reset, got %d", wrapper.retries)
-	}
-
-	if _, err := wrapper.Read(make([]byte, 1)); err == nil {
-		t.Fatal("expected temporary error after reset")
-	}
-	if wrapper.retries != 1 {
-		t.Fatalf("unexpected retry count after reset %d", wrapper.retries)
-	}
-}
-
-func TestSafeReadWriteCloserFailsAfterTooManyTemporaryErrors(t *testing.T) {
-	t.Parallel()
-
-	wrapper := &safeReadWriteCloser{ReadWriteCloser: &scriptedReadWriteCloser{
-		results: []struct {
-			n   int
-			err error
-		}{
-			{err: temporaryNetError{}},
-			{err: temporaryNetError{}},
-			{err: temporaryNetError{}},
-			{err: temporaryNetError{}},
-		},
-	}}
-
-	for attempt := 0; attempt < safeTransportMaxRetries; attempt++ {
-		if _, err := wrapper.Read(make([]byte, 1)); err == nil {
-			t.Fatalf("expected temporary error on attempt %d", attempt+1)
-		}
-	}
-
-	_, err := wrapper.Read(make([]byte, 1))
-	if err == nil || err.Error() != "read capnproto transport after multiple temporary errors: temporary" {
-		t.Fatalf("unexpected wrapped error %v", err)
-	}
-}
-
 func TestBuildConnectionOptionsAndCredentialsAuth(t *testing.T) {
 	t.Parallel()
 
 	connectorID := uuid.New()
-	options := BuildConnectionOptions(connectorID, []string{"a", "b"}, 7, net.IPv4(10, 0, 0, 1))
+	options := control.BuildConnectionOptions(connectorID, []string{"a", "b"}, 7, net.IPv4(10, 0, 0, 1))
 	if got := uuid.UUID(options.Client.ClientID); got != connectorID {
 		t.Fatalf("unexpected client id %s", got)
 	}
@@ -369,7 +284,7 @@ func TestBuildConnectionOptionsAndCredentialsAuth(t *testing.T) {
 		t.Fatalf("unexpected origin local ip %v", options.OriginLocalIP)
 	}
 
-	credentials := Credentials{
+	credentials := protocol.Credentials{
 		AccountTag:   "account",
 		TunnelSecret: []byte("secret"),
 	}
@@ -383,7 +298,7 @@ func TestBuildConnectionOptionsRoundTripsThroughCapnp(t *testing.T) {
 	t.Parallel()
 
 	connectorID := uuid.New()
-	original := BuildConnectionOptions(connectorID, []string{"serialized_headers", "support_datagram_v3_2"}, 3, net.IPv4(10, 20, 30, 40))
+	original := control.BuildConnectionOptions(connectorID, []string{"serialized_headers", "support_datagram_v3_2"}, 3, net.IPv4(10, 20, 30, 40))
 
 	_, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
@@ -393,12 +308,14 @@ func TestBuildConnectionOptionsRoundTripsThroughCapnp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pogs.Insert(tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct, original); err != nil {
+	err = pogs.Insert(tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct, original)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	var decoded RegistrationConnectionOptions
-	if err := pogs.Extract(&decoded, tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct); err != nil {
+	var decoded protocol.RegistrationConnectionOptions
+	err = pogs.Extract(&decoded, tunnelrpc.ConnectionOptions_TypeID, capnpOptions.Struct)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -408,7 +325,7 @@ func TestBuildConnectionOptionsRoundTripsThroughCapnp(t *testing.T) {
 	if len(decoded.Client.Features) != 2 || decoded.Client.Features[0] != "serialized_headers" || decoded.Client.Features[1] != "support_datagram_v3_2" {
 		t.Fatalf("unexpected feature list %#v", decoded.Client.Features)
 	}
-	if decoded.Client.Version != clientVersion {
+	if decoded.Client.Version != control.ClientVersion {
 		t.Fatalf("unexpected client version %q", decoded.Client.Version)
 	}
 	if decoded.Client.Arch != runtime.GOOS+"_"+runtime.GOARCH {
@@ -431,7 +348,7 @@ func TestBuildConnectionOptionsRoundTripsThroughCapnp(t *testing.T) {
 func TestPermanentRegistrationErrorWithNilInner(t *testing.T) {
 	t.Parallel()
 
-	var err *permanentRegistrationError
+	var err *control.PermanentRegistrationError
 	if err.Error() != "permanent registration error" {
 		t.Fatalf("unexpected nil error string %q", err.Error())
 	}
@@ -444,7 +361,7 @@ func TestRetryableErrorUnwrap(t *testing.T) {
 	t.Parallel()
 
 	root := errors.New("root")
-	err := &RetryableError{Err: root}
+	err := &protocol.RetryableError{Err: root}
 	if !errors.Is(err, root) {
 		t.Fatal("expected retryable error to unwrap root error")
 	}
@@ -453,7 +370,7 @@ func TestRetryableErrorUnwrap(t *testing.T) {
 func TestConnectionTypeStringUnknown(t *testing.T) {
 	t.Parallel()
 
-	if got := ConnectionType(99).String(); got != "unknown" {
+	if got := protocol.ConnectionType(99).String(); got != "unknown" {
 		t.Fatalf("unexpected string %q", got)
 	}
 }
@@ -470,7 +387,8 @@ func TestHandleUpdateConfigurationSetsVersionAndError(t *testing.T) {
 		t.Fatal(err)
 	}
 	params.SetVersion(2)
-	if err := params.SetConfig([]byte(`not-json`)); err != nil {
+	err = params.SetConfig([]byte(`not-json`))
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +401,7 @@ func TestHandleUpdateConfigurationSetsVersionAndError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	configManager, err := NewConfigManager()
+	configManager, err := config.NewConfigManager()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +415,8 @@ func TestHandleUpdateConfigurationSetsVersionAndError(t *testing.T) {
 		Params:  params,
 		Results: results,
 	}
-	if err := handleUpdateConfiguration(serviceInstance, callCfg); err != nil {
+	err = control.HandleUpdateConfiguration(serviceInstance.configApplier(), callCfg)
+	if err != nil {
 		t.Fatal(err)
 	}
 	result, err := results.Result()

@@ -10,6 +10,15 @@ import (
 	"github.com/sagernet/sing/common/logger"
 )
 
+func mustResolvedService(t *testing.T, rawService string) ResolvedService {
+	t.Helper()
+	service, err := parseResolvedService(rawService, defaultOriginRequestConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
 func TestRoundTripHTTPAppliesHostHeaderOverride(t *testing.T) {
 	t.Parallel()
 
@@ -30,8 +39,8 @@ func TestRoundTripHTTPAppliesHostHeaderOverride(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	transport, ok := origin.Client().Transport.(*http.Transport)
-	if !ok {
+	transport, isHTTPTransport := origin.Client().Transport.(*http.Transport)
+	if !isHTTPTransport {
 		t.Fatalf("unexpected transport type %T", origin.Client().Transport)
 	}
 
@@ -78,17 +87,13 @@ func TestResolveHTTPServiceUsesIngressSchemeForRoundTrip(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	transport, ok := origin.Client().Transport.(*http.Transport)
-	if !ok {
+	transport, isHTTPTransport := origin.Client().Transport.(*http.Transport)
+	if !isHTTPTransport {
 		t.Fatalf("unexpected transport type %T", origin.Client().Transport)
 	}
 
 	serviceInstance := newSpecialService(t)
-	serviceInstance.configManager.activeConfig = RuntimeConfig{
-		Ingress: []compiledIngressRule{{
-			Service: mustResolvedService(t, origin.URL),
-		}},
-	}
+	serviceInstance.configManager.Apply(1, []byte(`{"ingress":[{"service":"`+origin.URL+`"}]}`))
 
 	resolved, originURL, err := serviceInstance.resolveHTTPService("http://example.com/secure?value=1")
 	if err != nil {

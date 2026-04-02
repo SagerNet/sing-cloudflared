@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-cloudflared/internal/config"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
@@ -96,13 +98,13 @@ func TestAccessValidatorCacheReusesConstructedValidator(t *testing.T) {
 
 	var buildCount int
 	expected := &fakeAccessValidator{}
-	newAccessValidator = func(access AccessConfig, dialer N.Dialer) (accessValidator, error) {
+	newAccessValidator = func(access config.AccessConfig, dialer N.Dialer) (accessValidator, error) {
 		buildCount++
 		return expected, nil
 	}
 
 	cache := &accessValidatorCache{values: make(map[string]accessValidator)}
-	config := AccessConfig{Required: true, TeamName: "team", AudTag: []string{"aud"}}
+	config := config.AccessConfig{Required: true, TeamName: "team", AudTag: []string{"aud"}}
 	first, err := cache.Get(config)
 	if err != nil {
 		t.Fatal(err)
