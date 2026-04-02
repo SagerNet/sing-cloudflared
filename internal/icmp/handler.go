@@ -2,33 +2,16 @@ package icmp
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
-	"github.com/sagernet/sing/common/buf"
-	M "github.com/sagernet/sing/common/metadata"
+	tun "github.com/sagernet/sing-tun"
 )
 
 type RouteHandler interface {
 	RouteICMPConnection(
 		ctx context.Context,
-		session RouteSession,
-		routeContext RouteContext,
+		session tun.DirectRouteSession,
+		routeContext tun.DirectRouteContext,
 		timeout time.Duration,
-	) (RouteDestination, error)
-}
-
-type RouteSession struct {
-	Source      netip.Addr
-	Destination netip.Addr
-}
-
-type RouteContext interface {
-	WritePacket(packet *buf.Buffer, destination M.Socksaddr) error
-}
-
-type RouteDestination interface {
-	WritePacket(packet *buf.Buffer) error
-	Timeout() time.Duration
-	Close() error
+	) (tun.DirectRouteDestination, error)
 }

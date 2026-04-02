@@ -9,19 +9,19 @@ import (
 )
 
 type ServiceOptions struct {
-	Logger          logger.ContextLogger
-	Handler         Handler
-	ICMPHandler     ICMPHandler
-	ConnContext     func(context.Context) context.Context
-	Token           string
-	HAConnections   int
-	Protocol        string
-	PostQuantum     bool
-	ControlDialer   N.Dialer
-	TunnelDialer    N.Dialer
-	EdgeIPVersion   int
-	DatagramVersion string
-	GracePeriod     time.Duration
-	Region          string
-	ClientVersion   string
+	Logger           logger.ContextLogger
+	ConnectionDialer N.Dialer
+	ControlDialer    N.Dialer
+	TunnelDialer     N.Dialer
+	ICMPHandler      ICMPHandler
+	ConnContext      func(context.Context) context.Context
+	Token            string
+	HAConnections    int
+	Protocol         string
+	PostQuantum      bool
+	EdgeIPVersion    int
+	DatagramVersion  string
+	GracePeriod      time.Duration
+	Region           string
+	ClientVersion    string
 }

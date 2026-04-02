@@ -37,20 +37,20 @@ type (
 
 // protocol constants and variables
 const (
-	ConnectionTypeHTTP      = protocol.ConnectionTypeHTTP
-	ConnectionTypeWebsocket = protocol.ConnectionTypeWebsocket
-	ConnectionTypeTCP       = protocol.ConnectionTypeTCP
-	StreamTypeData          = protocol.StreamTypeData
-	StreamTypeRPC           = protocol.StreamTypeRPC
-	DatagramV2TypeUDP         = protocol.DatagramV2TypeUDP
-	DatagramV2TypeIP          = protocol.DatagramV2TypeIP
-	DatagramV2TypeIPWithTrace = protocol.DatagramV2TypeIPWithTrace
-	DatagramV2TypeTracingSpan = protocol.DatagramV2TypeTracingSpan
+	ConnectionTypeHTTP                 = protocol.ConnectionTypeHTTP
+	ConnectionTypeWebsocket            = protocol.ConnectionTypeWebsocket
+	ConnectionTypeTCP                  = protocol.ConnectionTypeTCP
+	StreamTypeData                     = protocol.StreamTypeData
+	StreamTypeRPC                      = protocol.StreamTypeRPC
+	DatagramV2TypeUDP                  = protocol.DatagramV2TypeUDP
+	DatagramV2TypeIP                   = protocol.DatagramV2TypeIP
+	DatagramV2TypeIPWithTrace          = protocol.DatagramV2TypeIPWithTrace
+	DatagramV2TypeTracingSpan          = protocol.DatagramV2TypeTracingSpan
 	DatagramV3TypeRegistration         = protocol.DatagramV3TypeRegistration
 	DatagramV3TypePayload              = protocol.DatagramV3TypePayload
 	DatagramV3TypeICMP                 = protocol.DatagramV3TypeICMP
 	DatagramV3TypeRegistrationResponse = protocol.DatagramV3TypeRegistrationResponse
-	MaxV3UDPPayloadLen = protocol.MaxV3UDPPayloadLen
+	MaxV3UDPPayloadLen                 = protocol.MaxV3UDPPayloadLen
 )
 
 var (
@@ -143,31 +143,31 @@ type (
 )
 
 var (
-	NewHTTP2Connection           = transport.NewHTTP2Connection
-	NewQUICConnection            = transport.NewQUICConnection
-	loadCloudflareRootCertPool   = transport.LoadCloudflareRootCertPool
-	dialQUIC                     = transport.DialQUIC
-	newHTTP2Stream               = transport.NewHTTP2Stream
-	newStreamReadWriteCloser     = transport.NewStreamReadWriteCloser
-	newWebsocketConn             = transport.NewWebsocketConn
-	isRetryableReadError         = transport.IsRetryableReadError
-	wrapWebsocketError           = transport.WrapWebsocketError
-	newFeatureSelector           = transport.NewFeatureSelector
-	resolveRemoteDatagramVersion = transport.ResolveRemoteDatagramVersion
-	accountEnabled               = transport.AccountEnabled
-	newEdgeTLSConfig             = transport.NewEdgeTLSConfig
+	NewHTTP2Connection               = transport.NewHTTP2Connection
+	NewQUICConnection                = transport.NewQUICConnection
+	loadCloudflareRootCertPool       = transport.LoadCloudflareRootCertPool
+	dialQUIC                         = transport.DialQUIC
+	newHTTP2Stream                   = transport.NewHTTP2Stream
+	newStreamReadWriteCloser         = transport.NewStreamReadWriteCloser
+	newWebsocketConn                 = transport.NewWebsocketConn
+	isRetryableReadError             = transport.IsRetryableReadError
+	wrapWebsocketError               = transport.WrapWebsocketError
+	newFeatureSelector               = transport.NewFeatureSelector
+	resolveRemoteDatagramVersion     = transport.ResolveRemoteDatagramVersion
+	accountEnabled                   = transport.AccountEnabled
+	newEdgeTLSConfig                 = transport.NewEdgeTLSConfig
 	applyPostQuantumCurvePreferences = transport.ApplyPostQuantumCurvePreferences
-	h2HeaderUpgrade              = protocol.H2HeaderUpgrade
-	h2HeaderResponseMeta         = protocol.H2HeaderResponseMeta
-	h2UpgradeWebsocket           = protocol.H2UpgradeWebsocket
-	h2ResponseMetaCloudflared    = transport.H2ResponseMetaCloudflared
-	h2EdgeSNI                    = transport.H2EdgeSNI
-	quicEdgeSNI                  = transport.QuicEdgeSNI
-	quicEdgeALPN                 = transport.QuicEdgeALPN
-	x25519MLKEM768PQKex          = transport.X25519MLKEM768PQKex
-	featurePostQuantum           = transport.FeaturePostQuantum
-	protocolQUIC                 = transport.ProtocolQUIC
-	protocolHTTP2                = transport.ProtocolHTTP2
+	h2HeaderUpgrade                  = protocol.H2HeaderUpgrade
+	h2HeaderResponseMeta             = protocol.H2HeaderResponseMeta
+	h2UpgradeWebsocket               = protocol.H2UpgradeWebsocket
+	h2ResponseMetaCloudflared        = transport.H2ResponseMetaCloudflared
+	h2EdgeSNI                        = transport.H2EdgeSNI
+	quicEdgeSNI                      = transport.QuicEdgeSNI
+	quicEdgeALPN                     = transport.QuicEdgeALPN
+	x25519MLKEM768PQKex              = transport.X25519MLKEM768PQKex
+	featurePostQuantum               = transport.FeaturePostQuantum
+	protocolQUIC                     = transport.ProtocolQUIC
+	protocolHTTP2                    = transport.ProtocolHTTP2
 )
 
 const defaultProtocolRetry = transport.DefaultProtocolRetry
@@ -184,26 +184,26 @@ type (
 )
 
 var (
-	NewDatagramV2Muxer          = datagram.NewDatagramV2Muxer
-	NewDatagramV3Muxer          = datagram.NewDatagramV3Muxer
-	NewDatagramV3SessionManager = datagram.NewDatagramV3SessionManager
-	ServeRPCStream              = datagram.ServeRPCStream
-	ServeV3RPCStream            = datagram.ServeV3RPCStream
-	newUDPSession               = datagram.NewUDPSession
-	newV2SessionRPCClient       = datagram.NewV2SessionRPCClient
-	sessionIDLength             = datagram.SessionIDLength
+	NewDatagramV2Muxer                        = datagram.NewDatagramV2Muxer
+	NewDatagramV3Muxer                        = datagram.NewDatagramV3Muxer
+	NewDatagramV3SessionManager               = datagram.NewDatagramV3SessionManager
+	ServeRPCStream                            = datagram.ServeRPCStream
+	ServeV3RPCStream                          = datagram.ServeV3RPCStream
+	newUDPSession                             = datagram.NewUDPSession
+	newV2SessionRPCClient                     = datagram.NewV2SessionRPCClient
+	sessionIDLength                           = datagram.SessionIDLength
 	errUnsupportedDatagramV3UDPRegistration   = datagram.ErrUnsupportedDatagramV3UDPRegistration
 	errUnsupportedDatagramV3UDPUnregistration = datagram.ErrUnsupportedDatagramV3UDPUnregistration
-	v3FlagIPv6                       = datagram.V3FlagIPv6
-	v3ResponseErrorWithMsg           = datagram.V3ResponseErrorWithMsg
-	v3ResponseDestinationUnreachable = datagram.V3ResponseDestinationUnreachable
-	v3RegistrationFlagLen            = datagram.V3RegistrationFlagLen
-	v3RegistrationPortLen            = datagram.V3RegistrationPortLen
-	v3RegistrationIdleLen            = datagram.V3RegistrationIdleLen
-	v3RequestIDLength                = datagram.V3RequestIDLength
-	v3IPv4AddrLen                    = datagram.V3IPv4AddrLen
-	v3IPv6AddrLen                    = datagram.V3IPv6AddrLen
-	v3PayloadHeaderLen               = datagram.V3PayloadHeaderLen
+	v3FlagIPv6                                = datagram.V3FlagIPv6
+	v3ResponseErrorWithMsg                    = datagram.V3ResponseErrorWithMsg
+	v3ResponseDestinationUnreachable          = datagram.V3ResponseDestinationUnreachable
+	v3RegistrationFlagLen                     = datagram.V3RegistrationFlagLen
+	v3RegistrationPortLen                     = datagram.V3RegistrationPortLen
+	v3RegistrationIdleLen                     = datagram.V3RegistrationIdleLen
+	v3RequestIDLength                         = datagram.V3RequestIDLength
+	v3IPv4AddrLen                             = datagram.V3IPv4AddrLen
+	v3IPv6AddrLen                             = datagram.V3IPv6AddrLen
+	v3PayloadHeaderLen                        = datagram.V3PayloadHeaderLen
 )
 
 // icmp
@@ -218,22 +218,16 @@ type (
 var (
 	NewICMPBridge              = icmp.NewBridge
 	ParseICMPPacket            = icmp.ParsePacket
-	newRouteCache              = icmp.NewRouteCache
 	buildICMPTTLExceededPacket = icmp.BuildTTLExceededPacket
 	encodeV3ICMPDatagram       = icmp.EncodeV3Datagram
 	maxEncodedICMPPacketLen    = icmp.MaxEncodedPacketLen
 	maxICMPPayloadLen          = icmp.MaxPayloadLen
 	icmpFlowTimeout            = icmp.FlowTimeout
 	icmpTraceIdentityLength    = icmp.TraceIdentityLength
-	icmpErrorHeaderLen         = icmp.ErrorHeaderLen
 	ipv4TTLExceededQuoteLen    = icmp.IPv4TTLExceededQuoteLen
 	ipv6TTLExceededQuoteLen    = icmp.IPv6TTLExceededQuoteLen
 	icmpWireV2                 = icmp.WireV2
 	icmpWireV3                 = icmp.WireV3
-	icmpv4TypeEchoRequest      = icmp.V4TypeEchoRequest
-	icmpv4TypeTimeExceeded     = icmp.V4TypeTimeExceeded
-	icmpv6TypeEchoRequest      = icmp.V6TypeEchoRequest
-	icmpv6TypeTimeExceeded     = icmp.V6TypeTimeExceeded
 )
 
 // edge discovery hooks - these are function variables so we alias them

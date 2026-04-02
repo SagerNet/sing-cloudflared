@@ -24,10 +24,10 @@ func (v *fakeAccessValidator) Validate(ctx context.Context, request *http.Reques
 func newAccessTestService(t *testing.T) *Service {
 	t.Helper()
 	return &Service{
-		logger:        logger.NOP(),
-		accessCache:   &accessValidatorCache{values: make(map[string]accessValidator), dialer: N.SystemDialer},
-		handler:       &testHandler{},
-		controlDialer: N.SystemDialer,
+		logger:           logger.NOP(),
+		accessCache:      &accessValidatorCache{values: make(map[string]accessValidator), dialer: N.SystemDialer},
+		connectionDialer: N.SystemDialer,
+		controlDialer:    N.SystemDialer,
 	}
 }
 

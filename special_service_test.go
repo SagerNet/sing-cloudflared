@@ -49,31 +49,31 @@ func (w *fakeConnectResponseWriter) WriteResponse(responseError error, metadata 
 }
 
 func newSpecialService(t *testing.T) *Service {
-	return newSpecialServiceWithHandler(t, &testHandler{})
+	return newSpecialServiceWithHandler(t, N.SystemDialer)
 }
 
-func newSpecialServiceWithHandler(t *testing.T, handler Handler) *Service {
+func newSpecialServiceWithHandler(t *testing.T, handler N.Dialer) *Service {
 	t.Helper()
 	configManager, err := config.NewConfigManager()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &Service{
-		handler:       handler,
-		logger:        logger.NOP(),
-		configManager: configManager,
-		flowLimiter:   &datagram.FlowLimiter{},
+		connectionDialer: handler,
+		logger:           logger.NOP(),
+		configManager:    configManager,
+		flowLimiter:      &datagram.FlowLimiter{},
 	}
 }
 
-type countingHandler struct {
-	testHandler
+type countingDialer struct {
+	N.Dialer
 	count atomic.Int32
 }
 
-func (h *countingHandler) DialTCP(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	h.count.Add(1)
-	return h.testHandler.DialTCP(ctx, destination)
+func (d *countingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.count.Add(1)
+	return d.Dialer.DialContext(ctx, network, destination)
 }
 
 func startEchoListener(t *testing.T) net.Listener {
@@ -351,7 +351,7 @@ func TestHandleSocksProxyStreamDenyRule(t *testing.T) {
 		Ports:  []int{port},
 		Allow:  false,
 	}})
-	handler := &countingHandler{}
+	handler := &countingDialer{Dialer: N.SystemDialer}
 	clientSide, done := startSocksProxyStream(t, newSpecialServiceWithHandler(t, handler), service)
 	defer clientSide.Close()
 
@@ -383,7 +383,7 @@ func TestHandleSocksProxyStreamPortMismatchDefaultDeny(t *testing.T) {
 		Ports:  []int{port + 1},
 		Allow:  true,
 	}})
-	handler := &countingHandler{}
+	handler := &countingDialer{Dialer: N.SystemDialer}
 	clientSide, done := startSocksProxyStream(t, newSpecialServiceWithHandler(t, handler), service)
 	defer clientSide.Close()
 
@@ -408,7 +408,7 @@ func TestHandleSocksProxyStreamEmptyRulesDefaultDeny(t *testing.T) {
 	listener := startEchoListener(t)
 	defer listener.Close()
 
-	handler := &countingHandler{}
+	handler := &countingDialer{Dialer: N.SystemDialer}
 	clientSide, done := startSocksProxyStream(t, newSpecialServiceWithHandler(t, handler), newSocksProxyService(t, nil))
 	defer clientSide.Close()
 
@@ -494,7 +494,7 @@ func TestHandleStreamServiceGenericSchemeWithoutPort(t *testing.T) {
 	defer clientSide.Close()
 	defer serverSide.Close()
 
-	handler := &countingHandler{}
+	handler := &countingDialer{Dialer: N.SystemDialer}
 	serviceInstance := newSpecialServiceWithHandler(t, handler)
 	request := &protocol.ConnectRequest{
 		Type: protocol.ConnectionTypeWebsocket,

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
 )
@@ -651,10 +652,10 @@ func warmUpTunnel(t *testing.T, env *liveTestEnvironment) error {
 	t.Helper()
 	liveTestLogf("live tests: warming up tunnel via HTTP/2")
 	service, err := NewService(ServiceOptions{
-		Token:         env.token,
-		Protocol:      "http2",
-		HAConnections: 1,
-		Handler:       &testHandler{},
+		Token:            env.token,
+		Protocol:         "http2",
+		HAConnections:    1,
+		ConnectionDialer: N.SystemDialer,
 	})
 	if err != nil {
 		return err

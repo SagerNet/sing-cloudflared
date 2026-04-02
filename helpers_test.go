@@ -3,7 +3,6 @@ package cloudflared
 import (
 	"context"
 	"encoding/base64"
-	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -13,25 +12,10 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	"github.com/sagernet/sing-cloudflared/internal/transport"
 	"github.com/sagernet/sing/common/logger"
-	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
 	"github.com/google/uuid"
 )
-
-type testHandler struct{}
-
-func (h *testHandler) DialTCP(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	return net.Dial("tcp", destination.String())
-}
-
-func (h *testHandler) DialPacket(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error) {
-	conn, err := net.Dial("udp", destination.String())
-	if err != nil {
-		return nil, err
-	}
-	return conn.(N.PacketConn), nil
-}
 
 func testToken(t *testing.T) string {
 	t.Helper()
@@ -57,7 +41,7 @@ func newTestService(t *testing.T, token string, testProtocol string, haConnectio
 	serviceInstance := &Service{
 		ctx:               ctx,
 		cancel:            cancel,
-		handler:           &testHandler{},
+		connectionDialer:  N.SystemDialer,
 		logger:            logger.NOP(),
 		credentials:       credentials,
 		connectorID:       uuid.New(),

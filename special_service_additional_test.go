@@ -13,6 +13,7 @@ import (
 
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
 )
@@ -304,24 +305,24 @@ func TestServeFixedSocksStreamBridgesTraffic(t *testing.T) {
 	}
 }
 
-type dialErrorHandler struct {
-	testHandler
+type dialErrorDialer struct {
+	N.Dialer
 	err error
 }
 
-func (h *dialErrorHandler) DialTCP(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
-	return nil, h.err
+func (d *dialErrorDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return nil, d.err
 }
 
-type closingPipeHandler struct {
-	testHandler
+type closingPipeDialer struct {
+	N.Dialer
 	delay time.Duration
 }
 
-func (h *closingPipeHandler) DialTCP(ctx context.Context, destination M.Socksaddr) (net.Conn, error) {
+func (d *closingPipeDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	client, server := net.Pipe()
 	go func() {
-		time.Sleep(h.delay)
+		time.Sleep(d.delay)
 		_ = server.Close()
 	}()
 	return client, nil
@@ -343,7 +344,7 @@ func TestServeSocksProxyWritesDialErrorReply(t *testing.T) {
 	defer server.Close()
 	defer client.Close()
 
-	serviceInstance := newSpecialServiceWithHandler(t, &dialErrorHandler{err: errors.New("connection refused by test")})
+	serviceInstance := newSpecialServiceWithHandler(t, &dialErrorDialer{err: errors.New("connection refused by test")})
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- serviceInstance.serveSocksProxy(context.Background(), server, policy)

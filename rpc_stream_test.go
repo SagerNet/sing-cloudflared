@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/tunnelrpc"
+	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -15,12 +16,12 @@ import (
 )
 
 type blockingPacketDialHandler struct {
-	testHandler
+	N.Dialer
 	entered chan struct{}
 	release chan struct{}
 }
 
-func (h *blockingPacketDialHandler) DialPacket(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error) {
+func (h *blockingPacketDialHandler) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	select {
 	case <-h.entered:
 	default:
@@ -29,17 +30,17 @@ func (h *blockingPacketDialHandler) DialPacket(ctx context.Context, destination 
 
 	select {
 	case <-h.release:
-		return newBlockingPacketConn(), nil
+		return bufio.NewNetPacketConn(newBlockingPacketConn()), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func newRPCService(t *testing.T, handler Handler) *Service {
+func newRPCService(t *testing.T, handler N.Dialer) *Service {
 	t.Helper()
 
 	serviceInstance := newLimitedService(t, 0)
-	serviceInstance.handler = handler
+	serviceInstance.connectionDialer = handler
 	return serviceInstance
 }
 

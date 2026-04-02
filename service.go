@@ -40,7 +40,7 @@ type Service struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	logger           logger.ContextLogger
-	handler          Handler
+	connectionDialer N.Dialer
 	icmpHandler      ICMPHandler
 	connContext      func(context.Context) context.Context
 	clientVersion    string
@@ -178,7 +178,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		ctx:               serviceCtx,
 		cancel:            cancel,
 		logger:            serviceLogger,
-		handler:           options.Handler,
+		connectionDialer:  options.ConnectionDialer,
 		icmpHandler:       options.ICMPHandler,
 		connContext:       options.ConnContext,
 		clientVersion:     clientVersion,

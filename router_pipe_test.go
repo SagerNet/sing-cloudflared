@@ -8,14 +8,15 @@ import (
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
-func TestHandleTCPStreamUsesDialTCP(t *testing.T) {
+func TestHandleTCPStreamUsesDialContext(t *testing.T) {
 	t.Parallel()
 	listener := startEchoListener(t)
 	defer listener.Close()
 
-	serviceInstance := newSpecialServiceWithHandler(t, &testHandler{})
+	serviceInstance := newSpecialServiceWithHandler(t, N.SystemDialer)
 
 	serverSide, clientSide := net.Pipe()
 	defer clientSide.Close()

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 type routedPipeTCPOptions struct {
@@ -19,7 +20,7 @@ func (s *Service) dialRouterTCPWithMetadata(ctx context.Context, destination M.S
 	if options.timeout > 0 {
 		dialCtx, cancel = context.WithTimeout(ctx, options.timeout)
 	}
-	conn, err := s.handler.DialTCP(dialCtx, destination)
+	conn, err := s.connectionDialer.DialContext(dialCtx, N.NetworkTCP, destination)
 	if cancel != nil {
 		cancel()
 	}

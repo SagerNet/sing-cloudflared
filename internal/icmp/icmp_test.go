@@ -3,15 +3,16 @@ package icmp
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-cloudflared/internal/icmptest"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/gtcpip/header"
 	"github.com/sagernet/sing/common/buf"
-	M "github.com/sagernet/sing/common/metadata"
 )
 
 type captureDatagramSender struct {
@@ -24,7 +25,7 @@ func (s *captureDatagramSender) SendDatagram(data []byte) error {
 }
 
 type fakeRouteDestination struct {
-	routeContext RouteContext
+	routeContext tun.DirectRouteContext
 	packets      [][]byte
 	reply        func(packet []byte) []byte
 	closed       bool
@@ -37,14 +38,10 @@ func (d *fakeRouteDestination) WritePacket(packet *buf.Buffer) error {
 	if d.reply != nil {
 		replyData := d.reply(data)
 		if replyData != nil {
-			return d.routeContext.WritePacket(buf.As(replyData).ToOwned(), M.Socksaddr{})
+			return d.routeContext.WritePacket(replyData)
 		}
 	}
 	return nil
-}
-
-func (d *fakeRouteDestination) Timeout() time.Duration {
-	return FlowTimeout
 }
 
 func (d *fakeRouteDestination) Close() error {
@@ -61,7 +58,7 @@ type fakeHandler struct {
 	destination *fakeRouteDestination
 }
 
-func (h *fakeHandler) RouteICMPConnection(ctx context.Context, session RouteSession, routeContext RouteContext, timeout time.Duration) (RouteDestination, error) {
+func (h *fakeHandler) RouteICMPConnection(ctx context.Context, session tun.DirectRouteSession, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
 	h.calls++
 	h.destination = &fakeRouteDestination{routeContext: routeContext}
 	return h.destination, nil
@@ -71,7 +68,7 @@ type replyHandler struct {
 	reply func([]byte) []byte
 }
 
-func (h *replyHandler) RouteICMPConnection(ctx context.Context, session RouteSession, routeContext RouteContext, timeout time.Duration) (RouteDestination, error) {
+func (h *replyHandler) RouteICMPConnection(ctx context.Context, session tun.DirectRouteSession, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
 	return &fakeRouteDestination{
 		routeContext: routeContext,
 		reply:        h.reply,
@@ -85,42 +82,12 @@ func buildEchoReply(packet []byte) []byte {
 	}
 	switch info.IPVersion {
 	case 4:
-		return buildIPv4ICMPPacket(info.Destination, info.SourceIP, 0, 0, info.Identifier, info.Sequence)
+		return icmptest.BuildIPv4ICMPPacket(info.Destination, info.SourceIP, header.ICMPv4EchoReply, 0, info.Identifier, info.Sequence)
 	case 6:
-		return buildIPv6ICMPPacket(info.Destination, info.SourceIP, 129, 0, info.Identifier, info.Sequence)
+		return icmptest.BuildIPv6ICMPPacket(info.Destination, info.SourceIP, header.ICMPv6EchoReply, 0, info.Identifier, info.Sequence)
 	default:
 		panic("unsupported version")
 	}
-}
-
-func buildIPv4ICMPPacket(source, destination netip.Addr, icmpType, icmpCode uint8, identifier, sequence uint16) []byte {
-	packet := make([]byte, 28)
-	packet[0] = 0x45
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
-	packet[8] = 64
-	packet[9] = 1
-	copy(packet[12:16], source.AsSlice())
-	copy(packet[16:20], destination.AsSlice())
-	packet[20] = icmpType
-	packet[21] = icmpCode
-	binary.BigEndian.PutUint16(packet[24:26], identifier)
-	binary.BigEndian.PutUint16(packet[26:28], sequence)
-	return packet
-}
-
-func buildIPv6ICMPPacket(source, destination netip.Addr, icmpType, icmpCode uint8, identifier, sequence uint16) []byte {
-	packet := make([]byte, 48)
-	packet[0] = 0x60
-	binary.BigEndian.PutUint16(packet[4:6], 8)
-	packet[6] = 58
-	packet[7] = 64
-	copy(packet[8:24], source.AsSlice())
-	copy(packet[24:40], destination.AsSlice())
-	packet[40] = icmpType
-	packet[41] = icmpCode
-	binary.BigEndian.PutUint16(packet[44:46], identifier)
-	binary.BigEndian.PutUint16(packet[46:48], sequence)
-	return packet
 }
 
 func TestBridgeHandleV2RoutesEchoRequest(t *testing.T) {
@@ -131,8 +98,8 @@ func TestBridgeHandleV2RoutesEchoRequest(t *testing.T) {
 
 	source := netip.MustParseAddr("198.18.0.2")
 	target := netip.MustParseAddr("1.1.1.1")
-	packet1 := buildIPv4ICMPPacket(source, target, 8, 0, 1, 1)
-	packet2 := buildIPv4ICMPPacket(source, target, 8, 0, 1, 2)
+	packet1 := icmptest.BuildIPv4ICMPPacket(source, target, header.ICMPv4Echo, 0, 1, 1)
+	packet2 := icmptest.BuildIPv4ICMPPacket(source, target, header.ICMPv4Echo, 0, 1, 2)
 
 	err := bridge.HandleV2(context.Background(), protocol.DatagramV2TypeIP, packet1)
 	if err != nil {
@@ -159,7 +126,7 @@ func TestBridgeHandleV2TracedReply(t *testing.T) {
 	sender := &captureDatagramSender{}
 	bridge := NewBridge(nil, &replyHandler{reply: buildEchoReply}, sender, WireV2, nil)
 
-	request := buildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), 8, 0, 9, 7)
+	request := icmptest.BuildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), header.ICMPv4Echo, 0, 9, 7)
 	request = append(request, traceIdentity...)
 	err := bridge.HandleV2(context.Background(), protocol.DatagramV2TypeIPWithTrace, request)
 	if err != nil {
@@ -179,7 +146,7 @@ func TestBridgeHandleV3Reply(t *testing.T) {
 	sender := &captureDatagramSender{}
 	bridge := NewBridge(nil, &replyHandler{reply: buildEchoReply}, sender, WireV3, nil)
 
-	request := buildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), 128, 0, 3, 5)
+	request := icmptest.BuildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), header.ICMPv6EchoRequest, 0, 3, 5)
 	err := bridge.HandleV3(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -198,8 +165,8 @@ func TestBridgeDecrementsIPv4TTLBeforeRouting(t *testing.T) {
 	handler := &fakeHandler{}
 	bridge := NewBridge(nil, handler, &captureDatagramSender{}, WireV2, nil)
 
-	packet := buildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), V4TypeEchoRequest, 0, 1, 1)
-	packet[8] = 5
+	packet := icmptest.BuildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), header.ICMPv4Echo, 0, 1, 1)
+	header.IPv4(packet).SetTTL(5)
 
 	err := bridge.HandleV2(context.Background(), protocol.DatagramV2TypeIP, packet)
 	if err != nil {
@@ -208,7 +175,7 @@ func TestBridgeDecrementsIPv4TTLBeforeRouting(t *testing.T) {
 	if len(handler.destination.packets) != 1 {
 		t.Fatalf("expected one routed packet, got %d", len(handler.destination.packets))
 	}
-	if got := handler.destination.packets[0][8]; got != 4 {
+	if got := header.IPv4(handler.destination.packets[0]).TTL(); got != 4 {
 		t.Fatalf("expected decremented IPv4 TTL, got %d", got)
 	}
 }
@@ -218,8 +185,8 @@ func TestBridgeDecrementsIPv6HopLimitBeforeRouting(t *testing.T) {
 	handler := &fakeHandler{}
 	bridge := NewBridge(nil, handler, &captureDatagramSender{}, WireV3, nil)
 
-	packet := buildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), V6TypeEchoRequest, 0, 1, 1)
-	packet[7] = 3
+	packet := icmptest.BuildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), header.ICMPv6EchoRequest, 0, 1, 1)
+	header.IPv6(packet).SetHopLimit(3)
 
 	err := bridge.HandleV3(context.Background(), packet)
 	if err != nil {
@@ -228,7 +195,7 @@ func TestBridgeDecrementsIPv6HopLimitBeforeRouting(t *testing.T) {
 	if len(handler.destination.packets) != 1 {
 		t.Fatalf("expected one routed packet, got %d", len(handler.destination.packets))
 	}
-	if got := handler.destination.packets[0][7]; got != 2 {
+	if got := header.IPv6(handler.destination.packets[0]).HopLimit(); got != 2 {
 		t.Fatalf("expected decremented IPv6 hop limit, got %d", got)
 	}
 }
@@ -241,8 +208,8 @@ func TestBridgeHandleV2TTLExceededTracedReply(t *testing.T) {
 
 	source := netip.MustParseAddr("198.18.0.2")
 	target := netip.MustParseAddr("1.1.1.1")
-	packet := buildIPv4ICMPPacket(source, target, V4TypeEchoRequest, 0, 1, 1)
-	packet[8] = 1
+	packet := icmptest.BuildIPv4ICMPPacket(source, target, header.ICMPv4Echo, 0, 1, 1)
+	header.IPv4(packet).SetTTL(1)
 	packet = append(packet, traceIdentity...)
 
 	err := bridge.HandleV2(context.Background(), protocol.DatagramV2TypeIPWithTrace, packet)
@@ -261,7 +228,7 @@ func TestBridgeHandleV2TTLExceededTracedReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if packetInfo.ICMPType != V4TypeTimeExceeded || packetInfo.ICMPCode != 0 {
+	if packetInfo.ICMPType != uint8(header.ICMPv4TimeExceeded) || packetInfo.ICMPCode != 0 {
 		t.Fatalf("expected IPv4 time exceeded reply, got type=%d code=%d", packetInfo.ICMPType, packetInfo.ICMPCode)
 	}
 	if packetInfo.SourceIP != target || packetInfo.Destination != source {
@@ -279,8 +246,8 @@ func TestBridgeHandleV3TTLExceededReply(t *testing.T) {
 
 	source := netip.MustParseAddr("2001:db8::2")
 	target := netip.MustParseAddr("2606:4700:4700::1111")
-	packet := buildIPv6ICMPPacket(source, target, V6TypeEchoRequest, 0, 1, 1)
-	packet[7] = 1
+	packet := icmptest.BuildIPv6ICMPPacket(source, target, header.ICMPv6EchoRequest, 0, 1, 1)
+	header.IPv6(packet).SetHopLimit(1)
 
 	err := bridge.HandleV3(context.Background(), packet)
 	if err != nil {
@@ -296,7 +263,7 @@ func TestBridgeHandleV3TTLExceededReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if packetInfo.ICMPType != V6TypeTimeExceeded || packetInfo.ICMPCode != 0 {
+	if packetInfo.ICMPType != uint8(header.ICMPv6TimeExceeded) || packetInfo.ICMPCode != 0 {
 		t.Fatalf("expected IPv6 time exceeded reply, got type=%d code=%d", packetInfo.ICMPType, packetInfo.ICMPCode)
 	}
 	if packetInfo.SourceIP != target || packetInfo.Destination != source {
@@ -313,7 +280,7 @@ func TestBridgeDropsNonEcho(t *testing.T) {
 	sender := &captureDatagramSender{}
 	bridge := NewBridge(nil, handler, sender, WireV2, nil)
 
-	packet := buildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), 3, 0, 1, 1)
+	packet := icmptest.BuildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), header.ICMPv4DstUnreachable, 0, 1, 1)
 	err := bridge.HandleV2(context.Background(), protocol.DatagramV2TypeIP, packet)
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +295,7 @@ func TestBridgeDropsNonEcho(t *testing.T) {
 
 func TestBuildTTLExceededPacketUsesRFCQuoteLengths(t *testing.T) {
 	t.Parallel()
-	ipv4Packet := buildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), V4TypeEchoRequest, 0, 1, 1)
+	ipv4Packet := icmptest.BuildIPv4ICMPPacket(netip.MustParseAddr("198.18.0.2"), netip.MustParseAddr("1.1.1.1"), header.ICMPv4Echo, 0, 1, 1)
 	ipv4Packet = append(ipv4Packet, bytes.Repeat([]byte{0xaa}, 4096)...)
 	ipv4Info, err := ParsePacket(ipv4Packet)
 	if err != nil {
@@ -338,11 +305,11 @@ func TestBuildTTLExceededPacketUsesRFCQuoteLengths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ipv4Reply) != 20+ErrorHeaderLen+IPv4TTLExceededQuoteLen {
+	if len(ipv4Reply) != header.IPv4MinimumSize+header.ICMPv4MinimumSize+IPv4TTLExceededQuoteLen {
 		t.Fatalf("unexpected IPv4 TTL exceeded size: %d", len(ipv4Reply))
 	}
 
-	ipv6Packet := buildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), V6TypeEchoRequest, 0, 1, 1)
+	ipv6Packet := icmptest.BuildIPv6ICMPPacket(netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2606:4700:4700::1111"), header.ICMPv6EchoRequest, 0, 1, 1)
 	ipv6Packet = append(ipv6Packet, bytes.Repeat([]byte{0xbb}, 4096)...)
 	ipv6Info, err := ParsePacket(ipv6Packet)
 	if err != nil {
@@ -352,7 +319,7 @@ func TestBuildTTLExceededPacketUsesRFCQuoteLengths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ipv6Reply) != 40+ErrorHeaderLen+IPv6TTLExceededQuoteLen {
+	if len(ipv6Reply) != header.IPv6MinimumSize+header.ICMPv6MinimumSize+IPv6TTLExceededQuoteLen {
 		t.Fatalf("unexpected IPv6 TTL exceeded size: %d", len(ipv6Reply))
 	}
 }
@@ -446,9 +413,12 @@ func TestParsePacketRejectsMalformedPackets(t *testing.T) {
 		{
 			name: "IPv4 non-ICMP protocol",
 			packet: func() []byte {
-				packet := make([]byte, 28)
-				packet[0] = 0x45
-				packet[9] = 17
+				packet := make([]byte, header.IPv4MinimumSize+header.ICMPv4MinimumSize)
+				ipHeader := header.IPv4(packet)
+				ipHeader.Encode(&header.IPv4Fields{
+					TotalLength: uint16(len(packet)),
+					Protocol:    17,
+				})
 				return packet
 			}(),
 			wantErrSub: "IPv4 packet is not ICMP",
@@ -461,9 +431,13 @@ func TestParsePacketRejectsMalformedPackets(t *testing.T) {
 		{
 			name: "IPv6 non-ICMP protocol",
 			packet: func() []byte {
-				packet := make([]byte, 48)
-				packet[0] = 0x60
-				packet[6] = 17
+				packet := make([]byte, header.IPv6MinimumSize+header.ICMPv6MinimumSize)
+				ipHeader := header.IPv6(packet)
+				ipHeader.Encode(&header.IPv6Fields{
+					PayloadLength:     header.ICMPv6MinimumSize,
+					TransportProtocol: 17,
+					HopLimit:          64,
+				})
 				return packet
 			}(),
 			wantErrSub: "IPv6 packet is not ICMP",

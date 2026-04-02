@@ -2,33 +2,25 @@ package icmp
 
 import (
 	"context"
-	"encoding/binary"
 	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/gtcpip/header"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	M "github.com/sagernet/sing/common/metadata"
 )
 
 const (
-	FlowTimeout         = 30 * time.Second
-	TraceIdentityLength = 16 + 8 + 1
-	defaultPacketTTL    = 255
-	ErrorHeaderLen      = 8
+	FlowTimeout             = 30 * time.Second
+	TraceIdentityLength     = 16 + 8 + 1
+	defaultPacketTTL        = 255
 	IPv4TTLExceededQuoteLen = 548
 	IPv6TTLExceededQuoteLen = 1232
-	MaxPayloadLen       = 1280
-
-	V4TypeEchoRequest  = 8
-	icmpv4TypeEchoReply    = 0
-	V4TypeTimeExceeded = 11
-	V6TypeEchoRequest  = 128
-	icmpv6TypeEchoReply    = 129
-	V6TypeTimeExceeded = 3
+	MaxPayloadLen           = 1280
 )
 
 type WireVersion uint8
@@ -101,9 +93,9 @@ func (i PacketInfo) ReplyRequestKey() RequestKey {
 func (i PacketInfo) IsEchoRequest() bool {
 	switch i.IPVersion {
 	case 4:
-		return i.ICMPType == V4TypeEchoRequest && i.ICMPCode == 0
+		return i.ICMPType == uint8(header.ICMPv4Echo) && i.ICMPCode == 0
 	case 6:
-		return i.ICMPType == V6TypeEchoRequest && i.ICMPCode == 0
+		return i.ICMPType == uint8(header.ICMPv6EchoRequest) && i.ICMPCode == 0
 	default:
 		return false
 	}
@@ -112,9 +104,9 @@ func (i PacketInfo) IsEchoRequest() bool {
 func (i PacketInfo) IsEchoReply() bool {
 	switch i.IPVersion {
 	case 4:
-		return i.ICMPType == icmpv4TypeEchoReply && i.ICMPCode == 0
+		return i.ICMPType == uint8(header.ICMPv4EchoReply) && i.ICMPCode == 0
 	case 6:
-		return i.ICMPType == icmpv6TypeEchoReply && i.ICMPCode == 0
+		return i.ICMPType == uint8(header.ICMPv6EchoReply) && i.ICMPCode == 0
 	default:
 		return false
 	}
@@ -134,19 +126,21 @@ func (i PacketInfo) TTLExpired() bool {
 func (i *PacketInfo) DecrementTTL() error {
 	switch i.IPVersion {
 	case 4:
-		if i.IPv4TTL == 0 || i.IPv4HeaderLen < 20 || len(i.RawPacket) < i.IPv4HeaderLen {
+		if i.IPv4TTL == 0 || i.IPv4HeaderLen < header.IPv4MinimumSize || len(i.RawPacket) < i.IPv4HeaderLen {
 			return E.New("invalid IPv4 packet TTL state")
 		}
 		i.IPv4TTL--
-		i.RawPacket[8] = i.IPv4TTL
-		binary.BigEndian.PutUint16(i.RawPacket[10:12], 0)
-		binary.BigEndian.PutUint16(i.RawPacket[10:12], checksum(i.RawPacket[:i.IPv4HeaderLen], 0))
+		ipHeader := header.IPv4(i.RawPacket)
+		ipHeader.SetTTL(i.IPv4TTL)
+		ipHeader.SetChecksum(0)
+		ipHeader.SetChecksum(^ipHeader.CalculateChecksum())
 	case 6:
-		if i.IPv6HopLimit == 0 || len(i.RawPacket) < 40 {
+		if i.IPv6HopLimit == 0 || len(i.RawPacket) < header.IPv6MinimumSize {
 			return E.New("invalid IPv6 packet hop limit state")
 		}
 		i.IPv6HopLimit--
-		i.RawPacket[7] = i.IPv6HopLimit
+		ipHeader := header.IPv6(i.RawPacket)
+		ipHeader.SetHopLimit(i.IPv6HopLimit)
 	default:
 		return E.New("unsupported IP version: ", i.IPVersion)
 	}
@@ -192,8 +186,8 @@ func (w *ReplyWriter) RegisterRequestTrace(packetInfo PacketInfo, traceContext T
 	w.access.Unlock()
 }
 
-func (w *ReplyWriter) WritePacket(packet *buf.Buffer, destination M.Socksaddr) error {
-	packetInfo, err := ParsePacket(packet.Bytes())
+func (w *ReplyWriter) WritePacket(packet []byte) error {
+	packetInfo, err := ParsePacket(packet)
 	if err != nil {
 		return err
 	}
@@ -228,12 +222,12 @@ func (w *ReplyWriter) cleanupExpired(now time.Time) {
 }
 
 type Bridge struct {
-	ctx         context.Context
-	handler     RouteHandler
-	sender      protocol.DatagramSender
-	WireVersion WireVersion
-	logger      logger.ContextLogger
-	RouteCache  *RouteCache
+	ctx          context.Context
+	handler      RouteHandler
+	sender       protocol.DatagramSender
+	WireVersion  WireVersion
+	logger       logger.ContextLogger
+	routeMapping *tun.DirectRouteMapping
 
 	flowAccess sync.Mutex
 	flows      map[FlowKey]*FlowState
@@ -241,13 +235,13 @@ type Bridge struct {
 
 func NewBridge(ctx context.Context, handler RouteHandler, sender protocol.DatagramSender, WireVersion WireVersion, logger logger.ContextLogger) *Bridge {
 	bridge := &Bridge{
-		ctx:         ctx,
-		handler:     handler,
-		sender:      sender,
-		WireVersion: WireVersion,
-		logger:      logger,
-		RouteCache:  NewRouteCache(FlowTimeout),
-		flows:       make(map[FlowKey]*FlowState),
+		ctx:          ctx,
+		handler:      handler,
+		sender:       sender,
+		WireVersion:  WireVersion,
+		logger:       logger,
+		routeMapping: tun.NewDirectRouteMapping(FlowTimeout),
+		flows:        make(map[FlowKey]*FlowState),
 	}
 	if ctx != nil {
 		go bridge.cleanupLoop(ctx)
@@ -313,22 +307,15 @@ func (b *Bridge) handlePacket(ctx context.Context, payload []byte, traceContext 
 		return nil
 	}
 
-	session := RouteSession{
+	session := tun.DirectRouteSession{
 		Source:      packetInfo.SourceIP,
 		Destination: packetInfo.Destination,
 	}
-	destination, found := b.RouteCache.Lookup(session)
-	if !found {
-		destination, err = b.handler.RouteICMPConnection(
-			ctx,
-			session,
-			state.writer,
-			FlowTimeout,
-		)
-		if err != nil {
-			return nil
-		}
-		b.RouteCache.Store(session, destination)
+	destination, err := b.routeMapping.Lookup(session, func(timeout time.Duration) (tun.DirectRouteDestination, error) {
+		return b.handler.RouteICMPConnection(ctx, session, state.writer, timeout)
+	})
+	if err != nil {
+		return nil
 	}
 
 	return destination.WritePacket(buf.As(packetInfo.RawPacket).ToOwned())
@@ -390,76 +377,63 @@ func ParsePacket(packet []byte) (PacketInfo, error) {
 	if len(packet) < 1 {
 		return PacketInfo{}, E.New("empty IP packet")
 	}
-	version := packet[0] >> 4
-	switch version {
-	case 4:
+	switch header.IPVersion(packet) {
+	case header.IPv4Version:
 		return parseIPv4Packet(packet)
-	case 6:
+	case header.IPv6Version:
 		return parseIPv6Packet(packet)
 	default:
-		return PacketInfo{}, E.New("unsupported IP version: ", version)
+		return PacketInfo{}, E.New("unsupported IP version: ", packet[0]>>4)
 	}
 }
 
 func parseIPv4Packet(packet []byte) (PacketInfo, error) {
-	if len(packet) < 20 {
+	if len(packet) < header.IPv4MinimumSize {
 		return PacketInfo{}, E.New("IPv4 packet too short")
 	}
-	headerLen := int(packet[0]&0x0F) * 4
-	if headerLen < 20 || len(packet) < headerLen+8 {
+	ipHeader := header.IPv4(packet)
+	headerLen := int(ipHeader.HeaderLength())
+	if headerLen < header.IPv4MinimumSize || len(packet) < headerLen+header.ICMPv4MinimumSize {
 		return PacketInfo{}, E.New("invalid IPv4 header length")
 	}
-	if packet[9] != 1 {
+	if ipHeader.Protocol() != uint8(header.ICMPv4ProtocolNumber) {
 		return PacketInfo{}, E.New("IPv4 packet is not ICMP")
 	}
-	sourceIP, ok := netip.AddrFromSlice(packet[12:16])
-	if !ok {
-		return PacketInfo{}, E.New("invalid IPv4 source address")
-	}
-	destinationIP, ok := netip.AddrFromSlice(packet[16:20])
-	if !ok {
-		return PacketInfo{}, E.New("invalid IPv4 destination address")
-	}
+	icmpHeader := header.ICMPv4(ipHeader.Payload())
 	return PacketInfo{
 		IPVersion:     4,
-		Protocol:      1,
-		SourceIP:      sourceIP,
-		Destination:   destinationIP,
-		ICMPType:      packet[headerLen],
-		ICMPCode:      packet[headerLen+1],
-		Identifier:    binary.BigEndian.Uint16(packet[headerLen+4 : headerLen+6]),
-		Sequence:      binary.BigEndian.Uint16(packet[headerLen+6 : headerLen+8]),
+		Protocol:      uint8(header.ICMPv4ProtocolNumber),
+		SourceIP:      ipHeader.SourceAddr(),
+		Destination:   ipHeader.DestinationAddr(),
+		ICMPType:      uint8(icmpHeader.Type()),
+		ICMPCode:      uint8(icmpHeader.Code()),
+		Identifier:    icmpHeader.Ident(),
+		Sequence:      icmpHeader.Sequence(),
 		IPv4HeaderLen: headerLen,
-		IPv4TTL:       packet[8],
+		IPv4TTL:       ipHeader.TTL(),
 		RawPacket:     append([]byte(nil), packet...),
 	}, nil
 }
 
 func parseIPv6Packet(packet []byte) (PacketInfo, error) {
-	if len(packet) < 48 {
+	if len(packet) < header.IPv6MinimumSize+header.ICMPv6MinimumSize {
 		return PacketInfo{}, E.New("IPv6 packet too short")
 	}
-	if packet[6] != 58 {
+	ipHeader := header.IPv6(packet)
+	if ipHeader.NextHeader() != uint8(header.ICMPv6ProtocolNumber) {
 		return PacketInfo{}, E.New("IPv6 packet is not ICMP")
 	}
-	sourceIP, ok := netip.AddrFromSlice(packet[8:24])
-	if !ok {
-		return PacketInfo{}, E.New("invalid IPv6 source address")
-	}
-	destinationIP, ok := netip.AddrFromSlice(packet[24:40])
-	if !ok {
-		return PacketInfo{}, E.New("invalid IPv6 destination address")
-	}
+	icmpHeader := header.ICMPv6(ipHeader.Payload())
 	return PacketInfo{
 		IPVersion:    6,
-		Protocol:     58,
-		SourceIP:     sourceIP,
-		Destination:  destinationIP,
-		ICMPType:     packet[40],
-		ICMPCode:     packet[41],
-		Identifier:   binary.BigEndian.Uint16(packet[44:46]),
-		Sequence:     binary.BigEndian.Uint16(packet[46:48]),
-		IPv6HopLimit: packet[7],
+		Protocol:     uint8(header.ICMPv6ProtocolNumber),
+		SourceIP:     ipHeader.SourceAddr(),
+		Destination:  ipHeader.DestinationAddr(),
+		ICMPType:     uint8(icmpHeader.Type()),
+		ICMPCode:     uint8(icmpHeader.Code()),
+		Identifier:   icmpHeader.Ident(),
+		Sequence:     icmpHeader.Sequence(),
+		IPv6HopLimit: ipHeader.HopLimit(),
 		RawPacket:    append([]byte(nil), packet...),
 	}, nil
 }
@@ -495,45 +469,57 @@ func BuildTTLExceededPacket(packetInfo PacketInfo) ([]byte, error) {
 }
 
 func buildIPv4TTLExceededPacket(packetInfo PacketInfo) ([]byte, error) {
-	const headerLen = 20
 	if !packetInfo.SourceIP.Is4() || !packetInfo.Destination.Is4() {
 		return nil, E.New("TTL exceeded packet requires IPv4 addresses")
 	}
-
 	quotedLength := min(len(packetInfo.RawPacket), IPv4TTLExceededQuoteLen)
-	packet := make([]byte, headerLen+ErrorHeaderLen+quotedLength)
-	packet[0] = 0x45
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
-	packet[8] = defaultPacketTTL
-	packet[9] = 1
-	copy(packet[12:16], packetInfo.Destination.AsSlice())
-	copy(packet[16:20], packetInfo.SourceIP.AsSlice())
-	packet[20] = V4TypeTimeExceeded
-	packet[21] = 0
-	copy(packet[headerLen+ErrorHeaderLen:], packetInfo.RawPacket[:quotedLength])
-	binary.BigEndian.PutUint16(packet[22:24], checksum(packet[20:], 0))
-	binary.BigEndian.PutUint16(packet[10:12], checksum(packet[:headerLen], 0))
+	packet := make([]byte, header.IPv4MinimumSize+header.ICMPv4MinimumSize+quotedLength)
+
+	ipHeader := header.IPv4(packet)
+	ipHeader.Encode(&header.IPv4Fields{
+		TotalLength: uint16(len(packet)),
+		TTL:         defaultPacketTTL,
+		Protocol:    uint8(header.ICMPv4ProtocolNumber),
+		SrcAddr:     packetInfo.Destination,
+		DstAddr:     packetInfo.SourceIP,
+	})
+
+	icmpHeader := header.ICMPv4(ipHeader.Payload())
+	icmpHeader.SetType(header.ICMPv4TimeExceeded)
+	icmpHeader.SetCode(header.ICMPv4TTLExceeded)
+	copy(packet[header.IPv4MinimumSize+header.ICMPv4MinimumSize:], packetInfo.RawPacket[:quotedLength])
+	icmpHeader.SetChecksum(header.ICMPv4Checksum(icmpHeader, 0))
+	ipHeader.SetChecksum(^ipHeader.CalculateChecksum())
+
 	return packet, nil
 }
 
 func buildIPv6TTLExceededPacket(packetInfo PacketInfo) ([]byte, error) {
-	const headerLen = 40
 	if !packetInfo.SourceIP.Is6() || !packetInfo.Destination.Is6() {
 		return nil, E.New("TTL exceeded packet requires IPv6 addresses")
 	}
-
 	quotedLength := min(len(packetInfo.RawPacket), IPv6TTLExceededQuoteLen)
-	packet := make([]byte, headerLen+ErrorHeaderLen+quotedLength)
-	packet[0] = 0x60
-	binary.BigEndian.PutUint16(packet[4:6], uint16(ErrorHeaderLen+quotedLength))
-	packet[6] = 58
-	packet[7] = defaultPacketTTL
-	copy(packet[8:24], packetInfo.Destination.AsSlice())
-	copy(packet[24:40], packetInfo.SourceIP.AsSlice())
-	packet[40] = V6TypeTimeExceeded
-	packet[41] = 0
-	copy(packet[headerLen+ErrorHeaderLen:], packetInfo.RawPacket[:quotedLength])
-	binary.BigEndian.PutUint16(packet[42:44], checksum(packet[40:], ipv6PseudoHeaderChecksum(packetInfo.Destination, packetInfo.SourceIP, uint32(ErrorHeaderLen+quotedLength), 58)))
+	packet := make([]byte, header.IPv6MinimumSize+header.ICMPv6MinimumSize+quotedLength)
+
+	ipHeader := header.IPv6(packet)
+	ipHeader.Encode(&header.IPv6Fields{
+		PayloadLength:     uint16(header.ICMPv6MinimumSize + quotedLength),
+		TransportProtocol: header.ICMPv6ProtocolNumber,
+		HopLimit:          defaultPacketTTL,
+		SrcAddr:           packetInfo.Destination,
+		DstAddr:           packetInfo.SourceIP,
+	})
+
+	icmpHeader := header.ICMPv6(ipHeader.Payload())
+	icmpHeader.SetType(header.ICMPv6TimeExceeded)
+	icmpHeader.SetCode(header.ICMPv6HopLimitExceeded)
+	copy(packet[header.IPv6MinimumSize+header.ICMPv6MinimumSize:], packetInfo.RawPacket[:quotedLength])
+	icmpHeader.SetChecksum(header.ICMPv6Checksum(header.ICMPv6ChecksumParams{
+		Header: icmpHeader,
+		Src:    packetInfo.Destination.AsSlice(),
+		Dst:    packetInfo.SourceIP.AsSlice(),
+	}))
+
 	return packet, nil
 }
 
@@ -546,36 +532,6 @@ func EncodeDatagram(packet []byte, WireVersion WireVersion, traceContext TraceCo
 	default:
 		return nil, E.New("unsupported icmp wire version: ", WireVersion)
 	}
-}
-
-func ipv6PseudoHeaderChecksum(source, destination netip.Addr, payloadLength uint32, nextHeader uint8) uint32 {
-	var sum uint32
-	sum = checksumSum(source.AsSlice(), sum)
-	sum = checksumSum(destination.AsSlice(), sum)
-	var lengthBytes [4]byte
-	binary.BigEndian.PutUint32(lengthBytes[:], payloadLength)
-	sum = checksumSum(lengthBytes[:], sum)
-	sum = checksumSum([]byte{0, 0, 0, nextHeader}, sum)
-	return sum
-}
-
-func checksumSum(data []byte, sum uint32) uint32 {
-	for len(data) >= 2 {
-		sum += uint32(binary.BigEndian.Uint16(data[:2]))
-		data = data[2:]
-	}
-	if len(data) == 1 {
-		sum += uint32(data[0]) << 8
-	}
-	return sum
-}
-
-func checksum(data []byte, initial uint32) uint16 {
-	sum := checksumSum(data, initial)
-	for sum > 0xffff {
-		sum = (sum >> 16) + (sum & 0xffff)
-	}
-	return ^uint16(sum)
 }
 
 func encodeV2Datagram(packet []byte, _ TraceContext) ([]byte, error) {

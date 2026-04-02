@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -25,7 +26,7 @@ func (c *udpWriteDeadlinePacketConn) WritePacket(buffer *buf.Buffer, destination
 }
 
 func (s *Service) dialWarpPacketConnection(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error) {
-	if s.handler == nil {
+	if s.connectionDialer == nil {
 		return nil, E.New("handler not configured")
 	}
 
@@ -36,9 +37,10 @@ func (s *Service) dialWarpPacketConnection(ctx context.Context, destination M.So
 		defer cancel()
 	}
 
-	packetConn, err := s.handler.DialPacket(ctx, destination)
+	stdPacketConn, err := s.connectionDialer.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
 	}
+	packetConn := bufio.NewPacketConn(stdPacketConn)
 	return &udpWriteDeadlinePacketConn{PacketConn: packetConn}, nil
 }

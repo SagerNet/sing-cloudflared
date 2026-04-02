@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/datagram"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -123,12 +124,12 @@ func (c *controlledReadPacketConn) SetReadDeadline(time.Time) error  { return ni
 func (c *controlledReadPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
 type packetDialingHandler struct {
-	testHandler
+	N.Dialer
 	packetConn N.PacketConn
 }
 
-func (h *packetDialingHandler) DialPacket(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error) {
-	return h.packetConn, nil
+func (h *packetDialingHandler) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return bufio.NewNetPacketConn(h.packetConn), nil
 }
 
 func waitForV3SessionRemoval(t *testing.T, manager *datagram.DatagramV3SessionManager, requestID protocol.RequestID) {
@@ -149,7 +150,7 @@ func waitForV3SessionRemoval(t *testing.T, manager *datagram.DatagramV3SessionMa
 
 func TestDatagramV2RegisterSession(t *testing.T) {
 	serviceInstance := newLimitedService(t, 0)
-	serviceInstance.handler = &packetDialingHandler{packetConn: newBlockingPacketConn()}
+	serviceInstance.connectionDialer = &packetDialingHandler{packetConn: newBlockingPacketConn()}
 	muxer := datagram.NewDatagramV2Muxer(serviceInstance.muxerContext(), &captureDatagramSender{}, serviceInstance.logger)
 	sessionID := uuidTest(7)
 	err := muxer.RegisterSession(context.Background(), sessionID, net.IPv4(127, 0, 0, 1), 53, time.Second)
@@ -164,7 +165,7 @@ func TestDatagramV3SessionContextCancellationRemovesSession(t *testing.T) {
 
 	packetConn := newBlockingPacketConn()
 	serviceInstance := newLimitedService(t, 0)
-	serviceInstance.handler = &packetDialingHandler{packetConn: packetConn}
+	serviceInstance.connectionDialer = &packetDialingHandler{packetConn: packetConn}
 
 	requestID := protocol.RequestID{}
 	requestID[15] = 14

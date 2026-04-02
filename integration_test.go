@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
 )
@@ -33,8 +34,8 @@ func startLiveConfiguredService(t *testing.T, env *liveTestEnvironment, options 
 	if options.Token == "" {
 		options.Token = env.token
 	}
-	if options.Handler == nil {
-		options.Handler = &testHandler{}
+	if options.ConnectionDialer == nil {
+		options.ConnectionDialer = N.SystemDialer
 	}
 	serviceInstance, err := NewService(options)
 	if err != nil {

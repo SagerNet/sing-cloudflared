@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/icmp"
+	"github.com/sagernet/sing-cloudflared/internal/icmptest"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing-tun/gtcpip/header"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -149,10 +151,10 @@ func TestDatagramV2HandleDatagramDispatchesByType(t *testing.T) {
 		t.Fatal("expected UDP payload to be dispatched")
 	}
 
-	icmpPayload := append(buildIPv4ICMPPacket(
+	icmpPayload := append(icmptest.BuildIPv4ICMPPacket(
 		netip.MustParseAddr("198.18.0.2"),
 		netip.MustParseAddr("1.1.1.1"),
-		icmp.V4TypeEchoRequest, 0, 1, 1,
+		header.ICMPv4Echo, 0, 1, 1,
 	), byte(protocol.DatagramV2TypeIP))
 	muxer.HandleDatagram(context.Background(), icmpPayload)
 	if len(sender.sent) != 1 || sender.sent[0][len(sender.sent[0])-1] != byte(protocol.DatagramV2TypeIP) {
@@ -160,10 +162,10 @@ func TestDatagramV2HandleDatagramDispatchesByType(t *testing.T) {
 	}
 
 	traceIdentity := bytes.Repeat([]byte{0x7a}, icmp.TraceIdentityLength)
-	tracedPayload := append(buildIPv4ICMPPacket(
+	tracedPayload := append(icmptest.BuildIPv4ICMPPacket(
 		netip.MustParseAddr("198.18.0.3"),
 		netip.MustParseAddr("1.1.1.1"),
-		icmp.V4TypeEchoRequest, 0, 2, 2,
+		header.ICMPv4Echo, 0, 2, 2,
 	), traceIdentity...)
 	tracedPayload = append(tracedPayload, byte(protocol.DatagramV2TypeIPWithTrace))
 	muxer.HandleDatagram(context.Background(), tracedPayload)
