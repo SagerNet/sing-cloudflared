@@ -42,7 +42,7 @@ type Service struct {
 	logger           logger.ContextLogger
 	handler          Handler
 	icmpHandler      ICMPHandler
-	newContext       func(context.Context) context.Context
+	connContext      func(context.Context) context.Context
 	clientVersion    string
 	credentials      protocol.Credentials
 	connectorID      uuid.UUID
@@ -172,11 +172,6 @@ func NewService(options ServiceOptions) (*Service, error) {
 		clientVersion = "sing-cloudflared"
 	}
 
-	newContextFn := options.NewContext
-	if newContextFn == nil {
-		newContextFn = contextWithNewID
-	}
-
 	serviceCtx, cancel := context.WithCancel(context.Background())
 
 	return &Service{
@@ -185,7 +180,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		logger:            serviceLogger,
 		handler:           options.Handler,
 		icmpHandler:       options.ICMPHandler,
-		newContext:        newContextFn,
+		connContext:       options.ConnContext,
 		clientVersion:     clientVersion,
 		credentials:       credentials,
 		connectorID:       uuid.New(),

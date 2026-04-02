@@ -12,7 +12,7 @@ type ServiceOptions struct {
 	Logger          logger.ContextLogger
 	Handler         Handler
 	ICMPHandler     ICMPHandler
-	NewContext      func(context.Context) context.Context
+	ConnContext     func(context.Context) context.Context
 	Token           string
 	HAConnections   int
 	Protocol        string

@@ -162,13 +162,3 @@ func TestServiceHelpers(t *testing.T) {
 		t.Fatalf("unexpected bounded backoff %v", backoff)
 	}
 }
-
-func TestContextWithNewIDRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	ctx := contextWithNewID(context.Background())
-	id, loaded := ContextIDFrom(ctx)
-	if !loaded || id.ID == 0 || id.CreatedAt.IsZero() {
-		t.Fatalf("expected context id, got %#v loaded=%v", id, loaded)
-	}
-}
