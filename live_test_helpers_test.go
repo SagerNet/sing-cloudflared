@@ -296,78 +296,104 @@ func newCloudflareAPITestClient(config cloudflareProvisioningConfig) *cloudflare
 }
 
 func (c *cloudflareAPITestClient) call(ctx context.Context, method string, path string, body any, result any) error {
-	var requestBody io.Reader
+	var bodyData []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		requestBody = strings.NewReader(string(data))
+		bodyData = data
 	}
 
-	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, requestBody)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+c.apiToken)
-	request.Header.Set("Accept", "application/json")
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-
-	response, err := c.client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-
-	envelope := cloudflareAPIEnvelope{}
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		return &cloudflareAPICallError{
-			StatusCode: response.StatusCode,
-			Message:    fmt.Sprintf("%s %s returned %d with invalid JSON: %v", method, path, response.StatusCode, err),
-		}
-	}
-
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		var errorMessages []string
-		for _, apiErr := range envelope.Errors {
-			switch {
-			case apiErr.Code != nil:
-				errorMessages = append(errorMessages, fmt.Sprintf("%v: %s", apiErr.Code, apiErr.Message))
-			case apiErr.Message != "":
-				errorMessages = append(errorMessages, apiErr.Message)
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
 			}
 		}
-		if len(errorMessages) == 0 {
-			errorMessages = append(errorMessages, "unknown API error")
-		}
-		return &cloudflareAPICallError{
-			StatusCode: response.StatusCode,
-			Message:    fmt.Sprintf("%s %s returned %d: %s", method, path, response.StatusCode, strings.Join(errorMessages, "; ")),
-		}
-	}
 
-	if !envelope.Success {
-		var errorMessages []string
-		for _, apiErr := range envelope.Errors {
-			switch {
-			case apiErr.Code != nil:
-				errorMessages = append(errorMessages, fmt.Sprintf("%v: %s", apiErr.Code, apiErr.Message))
-			case apiErr.Message != "":
-				errorMessages = append(errorMessages, apiErr.Message)
+		var requestBody io.Reader
+		if bodyData != nil {
+			requestBody = strings.NewReader(string(bodyData))
+		}
+
+		request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, requestBody)
+		if err != nil {
+			return err
+		}
+		request.Header.Set("Authorization", "Bearer "+c.apiToken)
+		request.Header.Set("Accept", "application/json")
+		if bodyData != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
+
+		response, err := c.client.Do(request)
+		if err != nil {
+			return err
+		}
+
+		envelope := cloudflareAPIEnvelope{}
+		decodeErr := json.NewDecoder(response.Body).Decode(&envelope)
+		response.Body.Close()
+
+		if decodeErr != nil {
+			return &cloudflareAPICallError{
+				StatusCode: response.StatusCode,
+				Message:    fmt.Sprintf("%s %s returned %d with invalid JSON: %v", method, path, response.StatusCode, decodeErr),
 			}
 		}
-		if len(errorMessages) == 0 {
-			errorMessages = append(errorMessages, "unsuccessful Cloudflare API response")
-		}
-		return fmt.Errorf("%s %s: %s", method, path, strings.Join(errorMessages, "; "))
-	}
 
-	if result == nil || len(envelope.Result) == 0 || string(envelope.Result) == "null" {
-		return nil
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			var errorMessages []string
+			for _, apiErr := range envelope.Errors {
+				switch {
+				case apiErr.Code != nil:
+					errorMessages = append(errorMessages, fmt.Sprintf("%v: %s", apiErr.Code, apiErr.Message))
+				case apiErr.Message != "":
+					errorMessages = append(errorMessages, apiErr.Message)
+				}
+			}
+			if len(errorMessages) == 0 {
+				errorMessages = append(errorMessages, "unknown API error")
+			}
+			callErr := &cloudflareAPICallError{
+				StatusCode: response.StatusCode,
+				Message:    fmt.Sprintf("%s %s returned %d: %s", method, path, response.StatusCode, strings.Join(errorMessages, "; ")),
+			}
+			if response.StatusCode >= 500 {
+				lastErr = callErr
+				continue
+			}
+			return callErr
+		}
+
+		if !envelope.Success {
+			var errorMessages []string
+			for _, apiErr := range envelope.Errors {
+				switch {
+				case apiErr.Code != nil:
+					errorMessages = append(errorMessages, fmt.Sprintf("%v: %s", apiErr.Code, apiErr.Message))
+				case apiErr.Message != "":
+					errorMessages = append(errorMessages, apiErr.Message)
+				}
+			}
+			if len(errorMessages) == 0 {
+				errorMessages = append(errorMessages, "unsuccessful Cloudflare API response")
+			}
+			return fmt.Errorf("%s %s: %s", method, path, strings.Join(errorMessages, "; "))
+		}
+
+		if result == nil || len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+			return nil
+		}
+		return json.Unmarshal(envelope.Result, result)
 	}
-	return json.Unmarshal(envelope.Result, result)
+	return lastErr
 }
 
 type cloudflareCreatedTunnel struct {
