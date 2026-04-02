@@ -583,6 +583,9 @@ var (
 	liveEnvironmentOnce      sync.Once
 	sharedLiveEnvironment    *liveTestEnvironment
 	sharedLiveEnvironmentErr error
+
+	warmUpOnce sync.Once
+	warmUpErr  error
 )
 
 func requireLiveTestEnvironment(t *testing.T) *liveTestEnvironment {
@@ -607,7 +610,50 @@ func requireLiveTestEnvironment(t *testing.T) *liveTestEnvironment {
 	if sharedLiveEnvironmentErr != nil {
 		t.Fatal(sharedLiveEnvironmentErr)
 	}
+
+	warmUpOnce.Do(func() {
+		warmUpErr = warmUpTunnel(t, sharedLiveEnvironment)
+	})
+	if warmUpErr != nil {
+		t.Fatal("warm up tunnel: ", warmUpErr)
+	}
+
 	return sharedLiveEnvironment
+}
+
+func warmUpTunnel(t *testing.T, env *liveTestEnvironment) error {
+	t.Helper()
+	liveTestLogf("live tests: warming up tunnel via HTTP/2")
+	service, err := NewService(ServiceOptions{
+		Token:         env.token,
+		Protocol:      "http2",
+		HAConnections: 1,
+		Handler:       &testHandler{},
+	})
+	if err != nil {
+		return err
+	}
+	defer service.Close()
+	err = service.Start()
+	if err != nil {
+		return err
+	}
+	requestURL := strings.TrimRight(env.baseURL, "/") + "/ping"
+	client := &http.Client{Timeout: 10 * time.Second}
+	deadline := time.Now().Add(4 * time.Minute)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(requestURL)
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && string(body) == `{"ok":true}` {
+				liveTestLogf("live tests: tunnel warm-up complete")
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("tunnel warm-up timed out after 4m at %s", requestURL)
 }
 
 func waitForTunnel(t *testing.T, testURL string, timeout time.Duration) {
