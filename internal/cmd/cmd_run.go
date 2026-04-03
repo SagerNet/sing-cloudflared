@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cloudflared "github.com/sagernet/sing-cloudflared"
+	"github.com/sagernet/sing-cloudflared/pkg/icmp"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 
@@ -70,6 +71,7 @@ func run() error {
 	service, err := cloudflared.NewService(cloudflared.ServiceOptions{
 		Logger:           serviceLogger,
 		ConnectionDialer: N.SystemDialer,
+		ICMPHandler:      icmp.NewDirectHandler(serviceLogger),
 		Token:            token,
 		HAConnections:    commandRunFlagHAConnections,
 		Protocol:         commandRunFlagProtocol,

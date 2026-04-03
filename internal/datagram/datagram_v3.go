@@ -71,7 +71,7 @@ func NewDatagramV3Muxer(muxerContext MuxerContext, sender protocol.DatagramSende
 		context: muxerContext,
 		logger:  log,
 		sender:  sender,
-		icmp:    icmp.NewBridge(muxerContext.Context, nil, sender, icmp.WireV3, log),
+		icmp:    icmp.NewBridge(muxerContext.Context, muxerContext.ICMPHandler, sender, icmp.WireV3, log),
 		manager: manager,
 	}
 }

@@ -29,6 +29,7 @@ type MuxerContext struct {
 	MaxActiveFlows func() uint64
 	FlowLimiter    *FlowLimiter
 	DialPacket     func(ctx context.Context, destination M.Socksaddr) (N.PacketConn, error)
+	ICMPHandler    icmp.RouteHandler
 }
 
 type DatagramV2Muxer struct {
@@ -46,7 +47,7 @@ func NewDatagramV2Muxer(muxerContext MuxerContext, sender protocol.DatagramSende
 		context:  muxerContext,
 		logger:   log,
 		sender:   sender,
-		icmp:     icmp.NewBridge(muxerContext.Context, nil, sender, icmp.WireV2, log),
+		icmp:     icmp.NewBridge(muxerContext.Context, muxerContext.ICMPHandler, sender, icmp.WireV2, log),
 		sessions: make(map[uuid.UUID]*UDPSession),
 	}
 }

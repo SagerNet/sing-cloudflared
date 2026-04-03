@@ -84,6 +84,7 @@ func (s *Service) muxerContext() datagram.MuxerContext {
 		MaxActiveFlows: s.maxActiveFlows,
 		FlowLimiter:    s.flowLimiter,
 		DialPacket:     s.dialWarpPacketConnection,
+		ICMPHandler:    s.icmpHandler,
 	}
 }
 
