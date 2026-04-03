@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
+
+	"github.com/google/uuid"
 )
 
 const (

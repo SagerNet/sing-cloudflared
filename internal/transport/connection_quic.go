@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-cloudflared/internal/control"
 	"github.com/sagernet/sing-cloudflared/internal/discovery"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
-	"github.com/sagernet/quic-go"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -127,8 +127,8 @@ func NewQUICConnection(
 		HandshakeIdleTimeout:  quicHandshakeIdleTimeout,
 		MaxIdleTimeout:        quicMaxIdleTimeout,
 		KeepAlivePeriod:       quicKeepAlivePeriod,
-		MaxIncomingStreams:     1 << 60,
-		MaxIncomingUniStreams:  1 << 60,
+		MaxIncomingStreams:    1 << 60,
+		MaxIncomingUniStreams: 1 << 60,
 		EnableDatagrams:       true,
 		InitialPacketSize:     QuicInitialPacketSize(edgeAddr.IPVersion),
 	}

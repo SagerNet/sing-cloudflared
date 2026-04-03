@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/config"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
-	N "github.com/sagernet/sing/common/network"
 )
 
 type accessTokenClaims struct {

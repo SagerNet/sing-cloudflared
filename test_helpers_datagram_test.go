@@ -24,7 +24,6 @@ func (s *captureDatagramSender) SendDatagram(data []byte) error {
 	return nil
 }
 
-
 func createTestCertificateAuthority(t *testing.T, commonName string) (*x509.Certificate, *rsa.PrivateKey, []byte) {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)

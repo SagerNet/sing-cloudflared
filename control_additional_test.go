@@ -13,9 +13,9 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/control"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	"github.com/sagernet/sing-cloudflared/internal/tunnelrpc"
+	"github.com/sagernet/sing/common/logger"
 
 	"github.com/google/uuid"
-	"github.com/sagernet/sing/common/logger"
 	capnp "zombiezen.com/go/capnproto2"
 	"zombiezen.com/go/capnproto2/pogs"
 )

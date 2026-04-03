@@ -36,6 +36,7 @@ type noopPacketConn struct{}
 func (noopPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
 	return M.Socksaddr{}, io.EOF
 }
+
 func (noopPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	buffer.Release()
 	return nil

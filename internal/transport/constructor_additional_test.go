@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-cloudflared/internal/discovery"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
-	"github.com/sagernet/quic-go"
 	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/google/uuid"

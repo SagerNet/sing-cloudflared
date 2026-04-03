@@ -34,13 +34,13 @@ func TestHandleHTTPServiceRequiresWebsocketForSpecialServices(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-			t.Run(testCase.name, func(t *testing.T) {
-				t.Parallel()
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 
-				respWriter := &fakeConnectResponseWriter{}
-				(&Service{logger: logger.NOP()}).handleHTTPService(context.Background(), nil, respWriter, &ConnectRequest{
-					Type: ConnectionTypeHTTP,
-					Dest: "http://example.com/test",
+			respWriter := &fakeConnectResponseWriter{}
+			(&Service{logger: logger.NOP()}).handleHTTPService(context.Background(), nil, respWriter, &ConnectRequest{
+				Type: ConnectionTypeHTTP,
+				Dest: "http://example.com/test",
 				Metadata: []Metadata{
 					{Key: metadataHTTPMethod, Val: http.MethodGet},
 					{Key: metadataHTTPHost, Val: "example.com"},

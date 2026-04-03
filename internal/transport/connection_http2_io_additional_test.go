@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing/common/logger"
+
 	"golang.org/x/net/http2"
 )
 

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
-
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
 )
