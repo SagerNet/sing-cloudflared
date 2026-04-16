@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ type fakeConnectResponseWriter struct {
 	headers http.Header
 	err     error
 	done    chan struct{}
+	doneOnce sync.Once
 }
 
 func (w *fakeConnectResponseWriter) WriteResponse(responseError error, metadata []protocol.Metadata) error {
@@ -42,8 +44,9 @@ func (w *fakeConnectResponseWriter) WriteResponse(responseError error, metadata 
 		}
 	}
 	if w.done != nil {
-		close(w.done)
-		w.done = nil
+		w.doneOnce.Do(func() {
+			close(w.done)
+		})
 	}
 	return nil
 }

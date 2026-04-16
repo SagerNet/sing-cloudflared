@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/control"
 	"github.com/sagernet/sing-cloudflared/internal/discovery"
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
+	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -30,8 +31,8 @@ const (
 	quicKeepAlivePeriod      = 1 * time.Second
 )
 
-var DialQUIC = func(ctx context.Context, udpConn *net.UDPConn, addr *net.UDPAddr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
-	return quic.Dial(ctx, udpConn, addr, tlsConfig, quicConfig)
+var DialQUIC = func(ctx context.Context, packetConn net.PacketConn, addr net.Addr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	return quic.Dial(ctx, packetConn, addr, tlsConfig, quicConfig)
 }
 
 func QuicInitialPacketSize(ipVersion int) uint16 {
@@ -84,12 +85,12 @@ type quicConn interface {
 
 type closeableQUICConn struct {
 	*quic.Conn
-	udpConn *net.UDPConn
+	packetConn net.PacketConn
 }
 
 func (c *closeableQUICConn) CloseWithError(code quic.ApplicationErrorCode, reason string) error {
 	err := c.Conn.CloseWithError(code, reason)
-	_ = c.udpConn.Close()
+	_ = c.packetConn.Close()
 	return err
 }
 
@@ -133,19 +134,19 @@ func NewQUICConnection(
 		InitialPacketSize:     QuicInitialPacketSize(edgeAddr.IPVersion),
 	}
 
-	udpConn, err := createUDPConnForConnIndex(ctx, edgeAddr, tunnelDialer)
+	packetConn, err := createPacketConnForConnIndex(ctx, edgeAddr, tunnelDialer)
 	if err != nil {
-		return nil, E.Cause(err, "listen UDP for QUIC edge")
+		return nil, E.Cause(err, "dial UDP for QUIC edge")
 	}
 
-	conn, err := DialQUIC(ctx, udpConn, edgeAddr.UDP, tlsConfig, quicConfig)
+	conn, err := DialQUIC(ctx, packetConn, edgeAddr.UDP, tlsConfig, quicConfig)
 	if err != nil {
-		udpConn.Close()
+		packetConn.Close()
 		return nil, E.Cause(err, "dial QUIC edge")
 	}
 
 	return &QUICConnection{
-		conn:                &closeableQUICConn{Conn: conn, udpConn: udpConn},
+		conn:                &closeableQUICConn{Conn: conn, packetConn: packetConn},
 		logger:              log,
 		edgeAddr:            edgeAddr,
 		connIndex:           connIndex,
@@ -159,17 +160,12 @@ func NewQUICConnection(
 	}, nil
 }
 
-func createUDPConnForConnIndex(ctx context.Context, edgeAddr *discovery.EdgeAddr, tunnelDialer N.Dialer) (*net.UDPConn, error) {
-	packetConn, err := tunnelDialer.ListenPacket(ctx, M.SocksaddrFrom(edgeAddr.UDP.AddrPort().Addr(), edgeAddr.UDP.AddrPort().Port()))
+func createPacketConnForConnIndex(ctx context.Context, edgeAddr *discovery.EdgeAddr, tunnelDialer N.Dialer) (net.PacketConn, error) {
+	conn, err := tunnelDialer.DialContext(ctx, N.NetworkUDP, M.SocksaddrFrom(edgeAddr.UDP.AddrPort().Addr(), edgeAddr.UDP.AddrPort().Port()))
 	if err != nil {
 		return nil, err
 	}
-	udpConn, ok := packetConn.(*net.UDPConn)
-	if !ok {
-		packetConn.Close()
-		return nil, E.New("unexpected packet conn type")
-	}
-	return udpConn, nil
+	return bufio.NewUnbindPacketConn(conn), nil
 }
 
 func (q *QUICConnection) Serve(ctx context.Context, handler StreamHandler) error {

@@ -242,12 +242,12 @@ func TestNewHTTP2ConnectionSuccess(t *testing.T) {
 	}
 }
 
-func TestNewQUICConnectionListenPacketError(t *testing.T) {
+func TestNewQUICConnectionDialContextError(t *testing.T) {
 	t.Parallel()
 
 	dialer := &constructorDialer{
-		listenPacket: func(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-			return nil, errors.New("listen failed")
+		dialContext: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+			return nil, errors.New("dial failed")
 		},
 	}
 
@@ -265,7 +265,7 @@ func TestNewQUICConnectionListenPacketError(t *testing.T) {
 		nil,
 		nil,
 	)
-	if err == nil || err.Error() != "listen UDP for QUIC edge: listen failed" {
+	if err == nil || err.Error() != "dial UDP for QUIC edge: dial failed" {
 		t.Fatalf("unexpected error %v", err)
 	}
 }
@@ -284,8 +284,9 @@ func TestNewQUICConnectionDialError(t *testing.T) {
 	defer cancel()
 
 	dialer := &constructorDialer{
-		listenPacket: func(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-			return net.ListenPacket("udp", "127.0.0.1:0")
+		dialContext: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+			var netDialer net.Dialer
+			return netDialer.DialContext(ctx, "udp", serverAddr.String())
 		},
 	}
 
@@ -346,8 +347,9 @@ func TestNewQUICConnectionSuccess(t *testing.T) {
 	}()
 
 	dialer := &constructorDialer{
-		listenPacket: func(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-			return net.ListenPacket("udp", "127.0.0.1:0")
+		dialContext: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+			var netDialer net.Dialer
+			return netDialer.DialContext(ctx, "udp", udpListener.LocalAddr().String())
 		},
 	}
 
@@ -387,20 +389,28 @@ func TestNewQUICConnectionAppliesPostQuantumCurvePreferences(t *testing.T) {
 		return x509.NewCertPool(), nil
 	}
 
+	serverConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverAddr := serverConn.LocalAddr().String()
+	_ = serverConn.Close()
+
 	var capturedCurves []tls.CurveID
-	DialQUIC = func(ctx context.Context, udpConn *net.UDPConn, addr *net.UDPAddr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+	DialQUIC = func(ctx context.Context, packetConn net.PacketConn, addr net.Addr, tlsConfig *tls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
 		capturedCurves = append([]tls.CurveID(nil), tlsConfig.CurvePreferences...)
-		_ = udpConn.Close()
+		_ = packetConn.Close()
 		return nil, errors.New("dial failed")
 	}
 
 	dialer := &constructorDialer{
-		listenPacket: func(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-			return net.ListenPacket("udp", "127.0.0.1:0")
+		dialContext: func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+			var netDialer net.Dialer
+			return netDialer.DialContext(ctx, "udp", serverAddr)
 		},
 	}
 
-	_, err := NewQUICConnection(
+	_, err = NewQUICConnection(
 		context.Background(),
 		&discovery.EdgeAddr{UDP: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7844}, IPVersion: 4},
 		0,
