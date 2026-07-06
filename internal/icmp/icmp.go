@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
-	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
-	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 )
@@ -151,6 +150,10 @@ type FlowState struct {
 	writer       *ReplyWriter
 	activeAccess sync.RWMutex
 	lastActive   time.Time
+
+	routeAccess   sync.Mutex
+	routeResolved bool
+	routePort     tun.Port
 }
 
 type TraceEntry struct {
@@ -222,26 +225,28 @@ func (w *ReplyWriter) cleanupExpired(now time.Time) {
 }
 
 type Bridge struct {
-	ctx          context.Context
-	handler      RouteHandler
-	sender       protocol.DatagramSender
-	WireVersion  WireVersion
-	logger       logger.ContextLogger
-	routeMapping *tun.DirectRouteMapping
+	ctx         context.Context
+	handler     RouteHandler
+	sender      protocol.DatagramSender
+	WireVersion WireVersion
+	logger      logger.ContextLogger
 
 	flowAccess sync.Mutex
 	flows      map[FlowKey]*FlowState
+
+	portAccess    sync.Mutex
+	attachedPorts map[tun.Port]bool
 }
 
 func NewBridge(ctx context.Context, handler RouteHandler, sender protocol.DatagramSender, WireVersion WireVersion, logger logger.ContextLogger) *Bridge {
 	bridge := &Bridge{
-		ctx:          ctx,
-		handler:      handler,
-		sender:       sender,
-		WireVersion:  WireVersion,
-		logger:       logger,
-		routeMapping: tun.NewDirectRouteMapping(FlowTimeout),
-		flows:        make(map[FlowKey]*FlowState),
+		ctx:           ctx,
+		handler:       handler,
+		sender:        sender,
+		WireVersion:   WireVersion,
+		logger:        logger,
+		flows:         make(map[FlowKey]*FlowState),
+		attachedPorts: make(map[tun.Port]bool),
 	}
 	if ctx != nil {
 		go bridge.cleanupLoop(ctx)
@@ -307,18 +312,77 @@ func (b *Bridge) handlePacket(ctx context.Context, payload []byte, traceContext 
 		return nil
 	}
 
-	session := tun.DirectRouteSession{
-		Source:      packetInfo.SourceIP,
-		Destination: packetInfo.Destination,
+	state.routeAccess.Lock()
+	if !state.routeResolved {
+		state.routePort = b.routeFlow(ctx, packetInfo)
+		state.routeResolved = true
 	}
-	destination, err := b.routeMapping.Lookup(session, func(timeout time.Duration) (tun.DirectRouteDestination, error) {
-		return b.handler.RouteICMPConnection(ctx, session, state.writer, timeout)
-	})
-	if err != nil {
+	port := state.routePort
+	state.routeAccess.Unlock()
+	if port == nil {
 		return nil
 	}
+	return port.WritePackets([][]byte{packetInfo.RawPacket})
+}
 
-	return destination.WritePacket(buf.As(packetInfo.RawPacket).ToOwned())
+func (b *Bridge) routeFlow(ctx context.Context, packetInfo PacketInfo) tun.Port {
+	port, err := b.handler.RouteICMPFlow(packetInfo.SourceIP, packetInfo.Destination)
+	if err != nil {
+		b.logger.DebugContext(ctx, E.Cause(err, "route ICMP flow from ", packetInfo.SourceIP, " to ", packetInfo.Destination))
+		return nil
+	}
+	err = b.attachPort(port)
+	if err != nil {
+		b.logger.ErrorContext(ctx, E.Cause(err, "attach ICMP return path"))
+		return nil
+	}
+	return port
+}
+
+func (b *Bridge) attachPort(port tun.Port) error {
+	b.portAccess.Lock()
+	defer b.portAccess.Unlock()
+	if b.attachedPorts[port] {
+		return nil
+	}
+	err := port.AttachReturn(bridgeReturn{b})
+	if err != nil {
+		return err
+	}
+	b.attachedPorts[port] = true
+	return nil
+}
+
+type bridgeReturn struct {
+	bridge *Bridge
+}
+
+func (r bridgeReturn) ReturnHeadroom() int {
+	return 0
+}
+
+func (r bridgeReturn) ReturnPackets(packets [][]byte) [][]byte {
+	unconsumed := packets[:0]
+	for _, packet := range packets {
+		packetInfo, err := ParsePacket(packet)
+		if err != nil || !packetInfo.IsEchoReply() {
+			unconsumed = append(unconsumed, packet)
+			continue
+		}
+		key := FlowKey{IPVersion: packetInfo.IPVersion, SourceIP: packetInfo.Destination, Destination: packetInfo.SourceIP}
+		r.bridge.flowAccess.Lock()
+		state := r.bridge.flows[key]
+		r.bridge.flowAccess.Unlock()
+		if state == nil {
+			unconsumed = append(unconsumed, packet)
+			continue
+		}
+		err = state.writer.WritePacket(packet)
+		if err != nil {
+			r.bridge.logger.Error(E.Cause(err, "write ICMP reply to ", packetInfo.Destination))
+		}
+	}
+	return unconsumed
 }
 
 func (b *Bridge) getFlowState(key FlowKey) *FlowState {
@@ -335,7 +399,17 @@ func (b *Bridge) getFlowState(key FlowKey) *FlowState {
 	return state
 }
 
+func (b *Bridge) detachPorts() {
+	b.portAccess.Lock()
+	defer b.portAccess.Unlock()
+	for port := range b.attachedPorts {
+		port.DetachReturn(bridgeReturn{b})
+		delete(b.attachedPorts, port)
+	}
+}
+
 func (b *Bridge) cleanupLoop(ctx context.Context) {
+	defer b.detachPorts()
 	ticker := time.NewTicker(FlowTimeout)
 	defer ticker.Stop()
 

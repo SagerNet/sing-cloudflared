@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
 	github.com/sagernet/sing v0.8.4
-	github.com/sagernet/sing-tun v0.8.7-0.20260402180740-11f6e77ec6c6
+	github.com/sagernet/sing-tun v0.8.12-0.20260706060456-1e6a2ae4554e
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.50.0
@@ -30,7 +30,7 @@ require (
 	github.com/sagernet/fswatch v0.1.1 // indirect
 	github.com/sagernet/gvisor v0.0.0-20250811.0-sing-box-mod.1 // indirect
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a // indirect
-	github.com/sagernet/nftables v0.3.0-beta.4 // indirect
+	github.com/sagernet/nftables v0.3.0-mod.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/tinylib/msgp v1.6.3 // indirect
 	github.com/vishvananda/netns v0.0.4 // indirect
