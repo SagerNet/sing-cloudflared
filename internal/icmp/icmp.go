@@ -467,7 +467,7 @@ func parseIPv4Packet(packet []byte) (PacketInfo, error) {
 	}
 	ipHeader := header.IPv4(packet)
 	headerLen := int(ipHeader.HeaderLength())
-	if headerLen < header.IPv4MinimumSize || len(packet) < headerLen+header.ICMPv4MinimumSize {
+	if !ipHeader.IsValid(len(packet)) || len(ipHeader.Payload()) < header.ICMPv4MinimumSize {
 		return PacketInfo{}, E.New("invalid IPv4 header length")
 	}
 	if ipHeader.Protocol() != uint8(header.ICMPv4ProtocolNumber) {
@@ -494,6 +494,9 @@ func parseIPv6Packet(packet []byte) (PacketInfo, error) {
 		return PacketInfo{}, E.New("IPv6 packet too short")
 	}
 	ipHeader := header.IPv6(packet)
+	if !ipHeader.IsValid(len(packet)) || len(ipHeader.Payload()) < header.ICMPv6MinimumSize {
+		return PacketInfo{}, E.New("invalid IPv6 payload length")
+	}
 	if ipHeader.NextHeader() != uint8(header.ICMPv6ProtocolNumber) {
 		return PacketInfo{}, E.New("IPv6 packet is not ICMP")
 	}
