@@ -13,10 +13,7 @@ import (
 func TestFeatureSelectorConfiguredWins(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	selector := NewFeatureSelector(ctx, "account", "v3")
+	selector := NewFeatureSelector("account", "v3")
 	version, features := selector.Snapshot()
 	if version != "v3" {
 		t.Fatalf("expected configured version to win, got %s", version)

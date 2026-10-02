@@ -49,7 +49,7 @@ func newTestService(t *testing.T, token string, testProtocol string, haConnectio
 		protocol:          testProtocol,
 		edgeIPVersion:     0,
 		datagramVersion:   "",
-		featureSelector:   transport.NewFeatureSelector(ctx, credentials.AccountTag, ""),
+		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, ""),
 		gracePeriod:       5 * time.Second,
 		configManager:     configManager,
 		flowLimiter:       &datagram.FlowLimiter{},

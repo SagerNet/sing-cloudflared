@@ -193,7 +193,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		region:            region,
 		edgeIPVersion:     edgeIPVersion,
 		datagramVersion:   datagramVersion,
-		featureSelector:   transport.NewFeatureSelector(serviceCtx, credentials.AccountTag, datagramVersion),
+		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, datagramVersion),
 		gracePeriod:       gracePeriod,
 		configManager:     configManager,
 		flowLimiter:       &datagram.FlowLimiter{},
@@ -214,6 +214,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 
 func (s *Service) Start() error {
 	s.logger.Info("starting Cloudflare Tunnel with ", s.haConnections, " HA connections")
+	s.featureSelector.Start(s.ctx)
 
 	regions, err := discoverEdge(s.ctx, s.region, s.controlDialer, s.controlResolver, s.tunnelResolver)
 	if err != nil {

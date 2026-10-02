@@ -43,7 +43,7 @@ type FeatureSelector struct {
 	access sync.RWMutex
 }
 
-func NewFeatureSelector(ctx context.Context, accountTag string, configured string) *FeatureSelector {
+func NewFeatureSelector(accountTag string, configured string) *FeatureSelector {
 	selector := &FeatureSelector{
 		configured:             configured,
 		accountTag:             accountTag,
@@ -53,13 +53,18 @@ func NewFeatureSelector(ctx context.Context, accountTag string, configured strin
 	}
 	if configured != "" {
 		selector.currentDatagramVersion = configured
-		return selector
-	}
-	_ = selector.refresh(ctx)
-	if selector.refreshInterval > 0 {
-		go selector.refreshLoop(ctx)
 	}
 	return selector
+}
+
+func (s *FeatureSelector) Start(ctx context.Context) {
+	if s.configured != "" {
+		return
+	}
+	_ = s.refresh(ctx)
+	if s.refreshInterval > 0 {
+		go s.refreshLoop(ctx)
+	}
 }
 
 func (s *FeatureSelector) Snapshot() (string, []string) {
