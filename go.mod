@@ -1,6 +1,6 @@
 module github.com/sagernet/sing-cloudflared
 
-go 1.24.7
+go 1.25.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
@@ -11,7 +11,7 @@ require (
 	github.com/sagernet/sing-tun v0.8.12-0.20260706060456-1e6a2ae4554e
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.50.0
+	golang.org/x/net v0.54.0
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible
 )
 
@@ -35,11 +35,11 @@ require (
 	github.com/tinylib/msgp v1.6.3 // indirect
 	github.com/vishvananda/netns v0.0.4 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/oauth2 v0.28.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 )
