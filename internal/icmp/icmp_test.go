@@ -12,7 +12,6 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
-	"github.com/sagernet/sing/common/buf"
 )
 
 type captureDatagramSender struct {
@@ -24,55 +23,61 @@ func (s *captureDatagramSender) SendDatagram(data []byte) error {
 	return nil
 }
 
-type fakeRouteDestination struct {
-	routeContext tun.DirectRouteContext
-	packets      [][]byte
-	reply        func(packet []byte) []byte
-	closed       bool
+type fakePort struct {
+	returnPath tun.Return
+	packets    [][]byte
+	reply      func(packet []byte) []byte
 }
 
-func (d *fakeRouteDestination) WritePacket(packet *buf.Buffer) error {
-	data := append([]byte(nil), packet.Bytes()...)
-	packet.Release()
-	d.packets = append(d.packets, data)
-	if d.reply != nil {
-		replyData := d.reply(data)
-		if replyData != nil {
-			return d.routeContext.WritePacket(replyData)
+func (p *fakePort) PortAddresses() (netip.Addr, netip.Addr) {
+	return netip.IPv4Unspecified(), netip.IPv6Unspecified()
+}
+
+func (p *fakePort) PortMTU() uint32 {
+	return 0
+}
+
+func (p *fakePort) AttachReturn(returnPath tun.Return) error {
+	p.returnPath = returnPath
+	return nil
+}
+
+func (p *fakePort) DetachReturn(returnPath tun.Return) error {
+	p.returnPath = nil
+	return nil
+}
+
+func (p *fakePort) WritePackets(packets [][]byte) error {
+	for _, packet := range packets {
+		data := append([]byte(nil), packet...)
+		p.packets = append(p.packets, data)
+		if p.reply != nil {
+			replyData := p.reply(data)
+			if replyData != nil {
+				p.returnPath.ReturnPackets([][]byte{replyData})
+			}
 		}
 	}
 	return nil
 }
 
-func (d *fakeRouteDestination) Close() error {
-	d.closed = true
-	return nil
-}
-
-func (d *fakeRouteDestination) IsClosed() bool {
-	return d.closed
-}
-
 type fakeHandler struct {
-	calls       int
-	destination *fakeRouteDestination
+	calls int
+	port  *fakePort
 }
 
-func (h *fakeHandler) RouteICMPConnection(ctx context.Context, session tun.DirectRouteSession, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
+func (h *fakeHandler) RouteICMPFlow(source netip.Addr, destination netip.Addr) (tun.Port, error) {
 	h.calls++
-	h.destination = &fakeRouteDestination{routeContext: routeContext}
-	return h.destination, nil
+	h.port = &fakePort{}
+	return h.port, nil
 }
 
 type replyHandler struct {
 	reply func([]byte) []byte
 }
 
-func (h *replyHandler) RouteICMPConnection(ctx context.Context, session tun.DirectRouteSession, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	return &fakeRouteDestination{
-		routeContext: routeContext,
-		reply:        h.reply,
-	}, nil
+func (h *replyHandler) RouteICMPFlow(source netip.Addr, destination netip.Addr) (tun.Port, error) {
+	return &fakePort{reply: h.reply}, nil
 }
 
 func buildEchoReply(packet []byte) []byte {
@@ -112,8 +117,8 @@ func TestBridgeHandleV2RoutesEchoRequest(t *testing.T) {
 	if handler.calls != 1 {
 		t.Fatalf("expected one direct-route lookup, got %d", handler.calls)
 	}
-	if len(handler.destination.packets) != 2 {
-		t.Fatalf("expected two packets written, got %d", len(handler.destination.packets))
+	if len(handler.port.packets) != 2 {
+		t.Fatalf("expected two packets written, got %d", len(handler.port.packets))
 	}
 	if len(sender.sent) != 0 {
 		t.Fatalf("expected no reply datagrams, got %d", len(sender.sent))
@@ -172,10 +177,10 @@ func TestBridgeDecrementsIPv4TTLBeforeRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(handler.destination.packets) != 1 {
-		t.Fatalf("expected one routed packet, got %d", len(handler.destination.packets))
+	if len(handler.port.packets) != 1 {
+		t.Fatalf("expected one routed packet, got %d", len(handler.port.packets))
 	}
-	if got := header.IPv4(handler.destination.packets[0]).TTL(); got != 4 {
+	if got := header.IPv4(handler.port.packets[0]).TTL(); got != 4 {
 		t.Fatalf("expected decremented IPv4 TTL, got %d", got)
 	}
 }
@@ -192,10 +197,10 @@ func TestBridgeDecrementsIPv6HopLimitBeforeRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(handler.destination.packets) != 1 {
-		t.Fatalf("expected one routed packet, got %d", len(handler.destination.packets))
+	if len(handler.port.packets) != 1 {
+		t.Fatalf("expected one routed packet, got %d", len(handler.port.packets))
 	}
-	if got := header.IPv6(handler.destination.packets[0]).HopLimit(); got != 2 {
+	if got := header.IPv6(handler.port.packets[0]).HopLimit(); got != 2 {
 		t.Fatalf("expected decremented IPv6 hop limit, got %d", got)
 	}
 }

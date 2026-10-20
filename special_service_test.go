@@ -24,10 +24,10 @@ import (
 )
 
 type fakeConnectResponseWriter struct {
-	status  int
-	headers http.Header
-	err     error
-	done    chan struct{}
+	status   int
+	headers  http.Header
+	err      error
+	done     chan struct{}
 	doneOnce sync.Once
 }
 

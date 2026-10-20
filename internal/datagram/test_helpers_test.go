@@ -1,54 +1,53 @@
 package datagram
 
 import (
-	"context"
-	"time"
+	"net/netip"
 
 	"github.com/sagernet/sing-cloudflared/internal/icmp"
 	"github.com/sagernet/sing-cloudflared/internal/icmptest"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
-	"github.com/sagernet/sing/common/buf"
 )
 
-type fakeICMPRouteDestination struct {
-	routeContext tun.DirectRouteContext
-	packets      [][]byte
-	reply        func(packet []byte) []byte
-	closed       bool
+type fakeICMPPort struct {
+	returnPath tun.Return
+	reply      func(packet []byte) []byte
 }
 
-func (d *fakeICMPRouteDestination) WritePacket(packet *buf.Buffer) error {
-	data := append([]byte(nil), packet.Bytes()...)
-	packet.Release()
-	d.packets = append(d.packets, data)
-	if d.reply != nil {
-		replyData := d.reply(data)
+func (p *fakeICMPPort) PortAddresses() (netip.Addr, netip.Addr) {
+	return netip.IPv4Unspecified(), netip.IPv6Unspecified()
+}
+
+func (p *fakeICMPPort) PortMTU() uint32 {
+	return 0
+}
+
+func (p *fakeICMPPort) AttachReturn(returnPath tun.Return) error {
+	p.returnPath = returnPath
+	return nil
+}
+
+func (p *fakeICMPPort) DetachReturn(returnPath tun.Return) error {
+	p.returnPath = nil
+	return nil
+}
+
+func (p *fakeICMPPort) WritePackets(packets [][]byte) error {
+	for _, packet := range packets {
+		replyData := p.reply(packet)
 		if replyData != nil {
-			return d.routeContext.WritePacket(replyData)
+			p.returnPath.ReturnPackets([][]byte{replyData})
 		}
 	}
 	return nil
-}
-
-func (d *fakeICMPRouteDestination) Close() error {
-	d.closed = true
-	return nil
-}
-
-func (d *fakeICMPRouteDestination) IsClosed() bool {
-	return d.closed
 }
 
 type replyICMPHandler struct {
 	reply func([]byte) []byte
 }
 
-func (h *replyICMPHandler) RouteICMPConnection(ctx context.Context, session tun.DirectRouteSession, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	return &fakeICMPRouteDestination{
-		routeContext: routeContext,
-		reply:        h.reply,
-	}, nil
+func (h *replyICMPHandler) RouteICMPFlow(source netip.Addr, destination netip.Addr) (tun.Port, error) {
+	return &fakeICMPPort{reply: h.reply}, nil
 }
 
 func buildEchoReply(packet []byte) []byte {

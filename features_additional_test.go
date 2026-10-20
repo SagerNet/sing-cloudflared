@@ -1,7 +1,6 @@
 package cloudflared
 
 import (
-	"context"
 	"hash/fnv"
 	"testing"
 )

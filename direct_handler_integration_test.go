@@ -2,7 +2,6 @@ package cloudflared
 
 import (
 	"bytes"
-	"context"
 	"net"
 	"net/netip"
 	"strings"
@@ -14,21 +13,25 @@ import (
 	"github.com/sagernet/sing-cloudflared/internal/icmptest"
 	pkgicmp "github.com/sagernet/sing-cloudflared/internal/pkg/icmp"
 	internalprotocol "github.com/sagernet/sing-cloudflared/internal/protocol"
-	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
-	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/logger"
 )
 
-type captureRouteContext struct {
+type captureReturn struct {
 	packetCh chan []byte
 }
 
-func (c *captureRouteContext) WritePacket(packet []byte) error {
-	copied := append([]byte(nil), packet...)
-	select {
-	case c.packetCh <- copied:
-	default:
+func (c *captureReturn) ReturnHeadroom() int {
+	return 0
+}
+
+func (c *captureReturn) ReturnPackets(packets [][]byte) [][]byte {
+	for _, packet := range packets {
+		copied := append([]byte(nil), packet...)
+		select {
+		case c.packetCh <- copied:
+		default:
+		}
 	}
 	return nil
 }
@@ -108,33 +111,28 @@ func requireDirectHandlerLoopbackCapability(t *testing.T, source, destination ne
 		requireIPv6Loopback(t)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	handler := pkgicmp.NewDirectHandler(logger.NOP())
-	routeContext := &captureRouteContext{packetCh: make(chan []byte, 1)}
-	destinationConn, err := handler.RouteICMPConnection(ctx, tun.DirectRouteSession{
-		Source:      source,
-		Destination: destination,
-	}, routeContext, 2*time.Second)
-	if shouldSkipICMPError(err) {
-		t.Skipf("ICMP loopback unavailable for %s: %v", destination, err)
-	}
+	port, err := handler.RouteICMPFlow(source, destination)
 	if err != nil {
-		t.Fatalf("RouteICMPConnection(%s): %v", destination, err)
+		t.Fatalf("RouteICMPFlow(%s): %v", destination, err)
 	}
-	defer destinationConn.Close()
+	returnPath := &captureReturn{packetCh: make(chan []byte, 1)}
+	err = port.AttachReturn(returnPath)
+	if err != nil {
+		t.Fatalf("AttachReturn(%s): %v", destination, err)
+	}
+	defer port.DetachReturn(returnPath)
 
-	err = destinationConn.WritePacket(buf.As(buildLoopbackICMPRequest(source, destination, 0x40, 1)).ToOwned())
+	err = port.WritePackets([][]byte{buildLoopbackICMPRequest(source, destination, 0x40, 1)})
 	if shouldSkipICMPError(err) {
 		t.Skipf("ICMP loopback write unavailable for %s: %v", destination, err)
 	}
 	if err != nil {
-		t.Fatalf("WritePacket(%s): %v", destination, err)
+		t.Fatalf("WritePackets(%s): %v", destination, err)
 	}
 
 	select {
-	case packet := <-routeContext.packetCh:
+	case packet := <-returnPath.packetCh:
 		info, err := ParseICMPPacket(packet)
 		if err != nil {
 			t.Fatalf("parse capability probe reply: %v", err)
