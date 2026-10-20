@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/config"
@@ -41,6 +42,12 @@ const (
 
 var FlushableContentTypes = []string{sseContentType, grpcContentType, ndjsonContentType}
 
+var (
+	EdgeDialTimeout   = 15 * time.Second
+	H2ReadIdleTimeout = 15 * time.Second
+	H2PingTimeout     = 15 * time.Second
+)
+
 type HTTP2Handler interface {
 	DispatchRequest(ctx context.Context, stream io.ReadWriteCloser, writer protocol.ConnectResponseWriter, request *protocol.ConnectRequest)
 	ApplyConfig(version int32, config []byte) config.UpdateResult
@@ -64,6 +71,7 @@ type HTTP2Connection struct {
 	registrationClient  control.RegistrationRPCClient
 	registrationResult  *protocol.RegistrationResult
 	controlStreamErr    error
+	pingTimedOut        atomic.Bool
 
 	activeRequests    sync.WaitGroup
 	serveCancel       context.CancelFunc
@@ -92,22 +100,28 @@ func NewHTTP2Connection(
 
 	tlsConfig := NewEdgeTLSConfig(rootCAs, H2EdgeSNI, nil)
 
-	tcpConn, err := tunnelDialer.DialContext(ctx, "tcp", M.SocksaddrFrom(edgeAddr.TCP.AddrPort().Addr(), edgeAddr.TCP.AddrPort().Port()))
+	dialCtx, cancel := context.WithTimeout(ctx, EdgeDialTimeout)
+	tcpConn, err := tunnelDialer.DialContext(dialCtx, "tcp", M.SocksaddrFrom(edgeAddr.TCP.AddrPort().Addr(), edgeAddr.TCP.AddrPort().Port()))
+	cancel()
 	if err != nil {
 		return nil, E.Cause(err, "dial edge TCP")
 	}
 
 	tlsConn := tls.Client(tcpConn, tlsConfig)
-	err = tlsConn.HandshakeContext(ctx)
+	handshakeCtx, cancel := context.WithTimeout(ctx, EdgeDialTimeout)
+	err = tlsConn.HandshakeContext(handshakeCtx)
+	cancel()
 	if err != nil {
 		tcpConn.Close()
 		return nil, E.Cause(err, "TLS handshake")
 	}
 
-	return &HTTP2Connection{
+	connection := &HTTP2Connection{
 		conn: tlsConn,
 		server: &http2.Server{
 			MaxConcurrentStreams: math.MaxUint32,
+			ReadIdleTimeout:      H2ReadIdleTimeout,
+			PingTimeout:          H2PingTimeout,
 		},
 		logger:              log,
 		edgeAddr:            edgeAddr,
@@ -119,7 +133,14 @@ func NewHTTP2Connection(
 		gracePeriod:         gracePeriod,
 		tunnelDialer:        tunnelDialer,
 		handler:             handler,
-	}, nil
+	}
+	// x/net http2 reports a lost PING to CountError as "conn_close_lost_ping"
+	connection.server.CountError = func(errorType string) {
+		if errorType == "conn_close_lost_ping" {
+			connection.pingTimedOut.Store(true)
+		}
+	}
+	return connection, nil
 }
 
 func (c *HTTP2Connection) Serve(ctx context.Context) error {
@@ -127,20 +148,24 @@ func (c *HTTP2Connection) Serve(ctx context.Context) error {
 	c.serveCancel = serveCancel
 
 	shutdownDone := make(chan struct{})
-	go func() {
-		<-ctx.Done()
+	stopShutdown := context.AfterFunc(ctx, func() {
 		c.gracefulShutdown()
 		close(shutdownDone)
-	}()
+	})
 
 	c.server.ServeConn(c.conn, &http2.ServeConnOpts{
 		Context: serveCtx,
 		Handler: c,
 	})
 
-	if ctx.Err() != nil {
+	if !stopShutdown() {
 		<-shutdownDone
+	}
+	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if c.pingTimedOut.Load() {
+		return E.New("edge connection lost: ping timeout")
 	}
 	if c.controlStreamErr != nil {
 		return c.controlStreamErr

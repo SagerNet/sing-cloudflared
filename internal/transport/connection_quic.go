@@ -134,7 +134,9 @@ func NewQUICConnection(
 		InitialPacketSize:     QuicInitialPacketSize(edgeAddr.IPVersion),
 	}
 
-	packetConn, err := createPacketConnForConnIndex(ctx, edgeAddr, tunnelDialer)
+	dialCtx, cancel := context.WithTimeout(ctx, EdgeDialTimeout)
+	packetConn, err := createPacketConnForConnIndex(dialCtx, edgeAddr, tunnelDialer)
+	cancel()
 	if err != nil {
 		return nil, E.Cause(err, "dial UDP for QUIC edge")
 	}
