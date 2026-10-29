@@ -58,6 +58,8 @@ type QUICConnection struct {
 	registrationResult  *protocol.RegistrationResult
 	onConnected         func()
 
+	LocallyManaged bool
+
 	serveCtx          context.Context
 	serveCancel       context.CancelFunc
 	registrationClose sync.Once
@@ -226,9 +228,11 @@ func (q *QUICConnection) register(ctx context.Context, stream QuicStreamHandle) 
 	if err != nil {
 		return E.Cause(err, "register connection")
 	}
-	err = control.ValidateRegistrationResult(result)
-	if err != nil {
-		return err
+	if !q.LocallyManaged {
+		err = control.ValidateRegistrationResult(result)
+		if err != nil {
+			return err
+		}
 	}
 	q.registrationResult = result
 	if q.onConnected != nil {

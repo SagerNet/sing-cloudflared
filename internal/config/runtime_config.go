@@ -172,6 +172,21 @@ func NewConfigManager() (*ConfigManager, error) {
 	}, nil
 }
 
+func NewLocalConfigManager(service string) (*ConfigManager, error) {
+	config, err := DefaultRuntimeConfig()
+	if err != nil {
+		return nil, err
+	}
+	config.Ingress, err = CompileIngressRules(config.OriginRequest, []LocalIngressRule{{Service: service, OriginRequest: config.OriginRequest}})
+	if err != nil {
+		return nil, err
+	}
+	return &ConfigManager{
+		currentVersion: -1,
+		activeConfig:   config,
+	}, nil
+}
+
 func (m *ConfigManager) Snapshot() RuntimeConfig {
 	m.access.RLock()
 	defer m.access.RUnlock()

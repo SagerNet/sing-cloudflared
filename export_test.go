@@ -17,7 +17,6 @@ type (
 	ConnectionType        = protocol.ConnectionType
 	Metadata              = protocol.Metadata
 	ConnectResponseWriter = protocol.ConnectResponseWriter
-	Credentials           = protocol.Credentials
 	DatagramSender        = protocol.DatagramSender
 	RequestID             = protocol.RequestID
 	RegistrationResult    = protocol.RegistrationResult

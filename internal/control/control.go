@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-cloudflared/internal/protocol"
@@ -23,6 +24,8 @@ const (
 var ClientVersion = "sing-cloudflared"
 
 var ErrNonRemoteManagedTunnelUnsupported = E.New("cloudflared only supports remote-managed tunnels")
+
+var ErrUnauthorized = E.New("Unauthorized")
 
 var NewRegistrationClient = func(ctx context.Context, stream io.ReadWriteCloser) RegistrationRPCClient {
 	return CreateRegistrationClient(ctx, stream)
@@ -130,7 +133,12 @@ func (c *RegistrationClient) RegisterConnection(
 			return nil, E.Cause(err, "read registration error")
 		}
 		cause, _ := resultError.Cause()
-		registrationError := E.New(cause)
+		var registrationError error
+		if detail, unauthorized := strings.CutPrefix(cause, "Unauthorized: "); unauthorized {
+			registrationError = E.Extend(ErrUnauthorized, detail)
+		} else {
+			registrationError = E.New(cause)
+		}
 		if resultError.ShouldRetry() {
 			return nil, &protocol.RetryableError{
 				Err:   registrationError,

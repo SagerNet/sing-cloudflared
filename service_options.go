@@ -18,6 +18,7 @@ type ServiceOptions struct {
 	ICMPHandler      ICMPHandler
 	ConnContext      func(context.Context) context.Context
 	Token            string
+	LocallyManaged   *LocallyManagedOptions
 	HAConnections    int
 	Protocol         string
 	PostQuantum      bool

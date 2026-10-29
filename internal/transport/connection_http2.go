@@ -67,6 +67,8 @@ type HTTP2Connection struct {
 	tunnelDialer N.Dialer
 	handler      HTTP2Handler
 
+	LocallyManaged bool
+
 	numPreviousAttempts uint8
 	registrationClient  control.RegistrationRPCClient
 	registrationResult  *protocol.RegistrationResult
@@ -225,12 +227,14 @@ func (c *HTTP2Connection) handleControlStream(ctx context.Context, r *http.Reque
 		go c.forceClose()
 		return
 	}
-	err = control.ValidateRegistrationResult(result)
-	if err != nil {
-		c.controlStreamErr = err
-		c.logger.Error("register connection: ", err)
-		go c.forceClose()
-		return
+	if !c.LocallyManaged {
+		err = control.ValidateRegistrationResult(result)
+		if err != nil {
+			c.controlStreamErr = err
+			c.logger.Error("register connection: ", err)
+			go c.forceClose()
+			return
+		}
 	}
 	c.registrationResult = result
 	c.handler.NotifyConnected(c.connIndex, ProtocolHTTP2)
