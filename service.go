@@ -605,10 +605,24 @@ func rotateEdgeAddrIndex(current int, size int) int {
 	return (current + 1) % size
 }
 
+// flattenRegions interleaves edge addresses across regions (r1[0], r2[0],
+// r1[1], r2[1], ...), so that consecutive HA connections, and consecutive
+// retries of one connection, alternate between regions instead of all
+// landing in the first region returned by edge discovery.
 func flattenRegions(regions [][]*discovery.EdgeAddr) []*discovery.EdgeAddr {
-	var result []*discovery.EdgeAddr
+	var (
+		result  []*discovery.EdgeAddr
+		longest int
+	)
 	for _, region := range regions {
-		result = append(result, region...)
+		longest = max(longest, len(region))
+	}
+	for index := 0; index < longest; index++ {
+		for _, region := range regions {
+			if index < len(region) {
+				result = append(result, region[index])
+			}
+		}
 	}
 	return result
 }
