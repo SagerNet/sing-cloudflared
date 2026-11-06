@@ -235,7 +235,12 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}, nil
 }
 
-func (s *Service) Start() error {
+func (s *Service) Start() (err error) {
+	defer func() {
+		if err != nil {
+			s.cancel()
+		}
+	}()
 	s.logger.Info("starting Cloudflare Tunnel with ", s.haConnections, " HA connections")
 	s.featureSelector.Start(s.ctx)
 
@@ -264,18 +269,26 @@ func (s *Service) Start() error {
 	for connIndex := 0; connIndex < s.haConnections; connIndex++ {
 		s.initializeConnectionState(uint8(connIndex))
 		s.done.Add(1)
-		go s.superviseConnection(uint8(connIndex), pool)
+		stopped := make(chan error, 1)
+		go func() {
+			stopped <- s.superviseConnection(uint8(connIndex), pool)
+		}()
 		select {
 		case readyConnIndex := <-s.connectedNotify:
 			if readyConnIndex != uint8(connIndex) {
 				s.logger.Debug("received unexpected ready notification for connection ", readyConnIndex)
 			}
 		case <-time.After(firstConnectionReadyTimeout):
-		case <-s.ctx.Done():
-			if connIndex == 0 {
+		case err := <-stopped:
+			if err == nil {
 				return s.ctx.Err()
 			}
-			return nil
+			s.connectedAccess.Lock()
+			connected := len(s.connectedIndices) > 0
+			s.connectedAccess.Unlock()
+			if !connected || s.ctx.Err() != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -337,14 +350,14 @@ const (
 	firstConnectionReadyTimeout = 15 * time.Second
 )
 
-func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) {
+func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) error {
 	defer s.done.Done()
 
 	edgeIndex := pool.take(int(connIndex))
 	for {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 		default:
 		}
 
@@ -352,7 +365,7 @@ func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) {
 		tunnelID := s.currentCredentials().TunnelID
 		err := s.safeServeConnection(connIndex, edgeAddr)
 		if err == nil || s.ctx.Err() != nil {
-			return
+			return nil
 		}
 		if s.locallyManaged != nil && s.locallyManaged.Renew != nil && errors.Is(err, control.ErrUnauthorized) {
 			s.logger.Warn("tunnel ", tunnelID, " rejected: ", err)
@@ -365,11 +378,11 @@ func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) {
 		if cancelAll {
 			s.logger.Error("connection ", connIndex, " failed permanently: ", err)
 			s.cancel()
-			return
+			return err
 		}
 		if !retry {
 			s.logger.Error("connection ", connIndex, " failed permanently: ", err)
-			return
+			return err
 		}
 
 		retries, switchedProtocol, switched := s.recordConnectionFailure(connIndex, err)
@@ -387,7 +400,7 @@ func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) {
 		select {
 		case <-time.After(backoff):
 		case <-s.ctx.Done():
-			return
+			return nil
 		}
 	}
 }
