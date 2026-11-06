@@ -618,10 +618,18 @@ func (p *edgeAddrPool) move(current int) int {
 
 func flattenRegions(regions [][]*discovery.EdgeAddr) []*discovery.EdgeAddr {
 	var result []*discovery.EdgeAddr
-	for _, region := range regions {
-		result = append(result, region...)
+	for index := 0; ; index++ {
+		var appended bool
+		for _, region := range regions {
+			if index < len(region) {
+				result = append(result, region[index])
+				appended = true
+			}
+		}
+		if !appended {
+			return result
+		}
 	}
-	return result
 }
 
 func effectiveHAConnections(requested, available int) int {
