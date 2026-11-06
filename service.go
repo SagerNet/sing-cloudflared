@@ -259,11 +259,12 @@ func (s *Service) Start() error {
 		s.logger.Info("requested ", s.haConnections, " HA connections but only ", cappedHAConnections, " edge addresses are available")
 		s.haConnections = cappedHAConnections
 	}
+	pool := &edgeAddrPool{addrs: edgeAddrs, used: make([]bool, len(edgeAddrs))}
 
 	for connIndex := 0; connIndex < s.haConnections; connIndex++ {
 		s.initializeConnectionState(uint8(connIndex))
 		s.done.Add(1)
-		go s.superviseConnection(uint8(connIndex), edgeAddrs)
+		go s.superviseConnection(uint8(connIndex), pool)
 		select {
 		case readyConnIndex := <-s.connectedNotify:
 			if readyConnIndex != uint8(connIndex) {
@@ -336,10 +337,10 @@ const (
 	firstConnectionReadyTimeout = 15 * time.Second
 )
 
-func (s *Service) superviseConnection(connIndex uint8, edgeAddrs []*discovery.EdgeAddr) {
+func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) {
 	defer s.done.Done()
 
-	edgeIndex := initialEdgeAddrIndex(connIndex, len(edgeAddrs))
+	edgeIndex := pool.take(int(connIndex))
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -347,7 +348,7 @@ func (s *Service) superviseConnection(connIndex uint8, edgeAddrs []*discovery.Ed
 		default:
 		}
 
-		edgeAddr := edgeAddrs[edgeIndex]
+		edgeAddr := pool.addrs[edgeIndex]
 		tunnelID := s.currentCredentials().TunnelID
 		err := s.safeServeConnection(connIndex, edgeAddr)
 		if err == nil || s.ctx.Err() != nil {
@@ -372,7 +373,7 @@ func (s *Service) superviseConnection(connIndex uint8, edgeAddrs []*discovery.Ed
 		}
 
 		retries, switchedProtocol, switched := s.recordConnectionFailure(connIndex, err)
-		edgeIndex = rotateEdgeAddrIndex(edgeIndex, len(edgeAddrs))
+		edgeIndex = pool.move(edgeIndex)
 		backoff := backoffDuration(int(retries))
 		retryableErr, isRetryable := E.Cast[*protocol.RetryableError](err)
 		if isRetryable && retryableErr.Delay > 0 {
@@ -591,18 +592,28 @@ func backoffDuration(retries int) time.Duration {
 	return backoff/2 + jitter
 }
 
-func initialEdgeAddrIndex(connIndex uint8, size int) int {
-	if size <= 1 {
-		return 0
-	}
-	return int(connIndex) % size
+type edgeAddrPool struct {
+	access sync.Mutex
+	addrs  []*discovery.EdgeAddr
+	used   []bool
 }
 
-func rotateEdgeAddrIndex(current int, size int) int {
-	if size <= 1 {
-		return 0
+func (p *edgeAddrPool) take(from int) int {
+	p.access.Lock()
+	defer p.access.Unlock()
+	index := from % len(p.addrs)
+	for p.used[index] {
+		index = (index + 1) % len(p.addrs)
 	}
-	return (current + 1) % size
+	p.used[index] = true
+	return index
+}
+
+func (p *edgeAddrPool) move(current int) int {
+	p.access.Lock()
+	p.used[current] = false
+	p.access.Unlock()
+	return p.take(current + 1)
 }
 
 func flattenRegions(regions [][]*discovery.EdgeAddr) []*discovery.EdgeAddr {

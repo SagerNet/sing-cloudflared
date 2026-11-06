@@ -139,12 +139,6 @@ func TestConnectionRetryDecisionCases(t *testing.T) {
 func TestServiceHelpers(t *testing.T) {
 	t.Parallel()
 
-	if index := initialEdgeAddrIndex(3, 2); index != 1 {
-		t.Fatalf("unexpected initial edge index %d", index)
-	}
-	if index := rotateEdgeAddrIndex(1, 3); index != 2 {
-		t.Fatalf("unexpected rotated edge index %d", index)
-	}
 	if got := effectiveHAConnections(4, 2); got != 2 {
 		t.Fatalf("unexpected effective HA %d", got)
 	}
