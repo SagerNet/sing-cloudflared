@@ -133,6 +133,10 @@ func (c *RegistrationClient) RegisterConnection(
 			return nil, E.Cause(err, "read registration error")
 		}
 		cause, _ := resultError.Cause()
+		// EDUPCONN only rejects this edge server, whatever shouldRetry says.
+		if cause == "EDUPCONN" {
+			return nil, E.New("already connected to this edge server")
+		}
 		var registrationError error
 		if detail, unauthorized := strings.CutPrefix(cause, "Unauthorized: "); unauthorized {
 			registrationError = E.Extend(ErrUnauthorized, detail)
