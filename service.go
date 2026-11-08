@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -256,15 +257,18 @@ func (s *Service) Start() (err error) {
 		return E.Cause(err, "discover edge")
 	}
 	regions = discovery.FilterByIPVersion(regions, s.edgeIPVersion)
-	edgeAddrs := flattenRegions(regions)
-	if len(edgeAddrs) == 0 {
+	var edgeAddrCount int
+	for _, region := range regions {
+		edgeAddrCount += len(region)
+	}
+	if edgeAddrCount == 0 {
 		return E.New("no edge addresses available")
 	}
-	if cappedHAConnections := effectiveHAConnections(s.haConnections, len(edgeAddrs)); cappedHAConnections != s.haConnections {
+	if cappedHAConnections := effectiveHAConnections(s.haConnections, edgeAddrCount); cappedHAConnections != s.haConnections {
 		s.logger.Info("requested ", s.haConnections, " HA connections but only ", cappedHAConnections, " edge addresses are available")
 		s.haConnections = cappedHAConnections
 	}
-	pool := &edgeAddrPool{addrs: edgeAddrs, used: make([]bool, len(edgeAddrs))}
+	pool := &edgeAddrPool{regions: regions, used: make(map[*discovery.EdgeAddr]bool)}
 
 	for connIndex := 0; connIndex < s.haConnections; connIndex++ {
 		s.initializeConnectionState(uint8(connIndex))
@@ -353,7 +357,7 @@ const (
 func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) error {
 	defer s.done.Done()
 
-	edgeIndex := pool.take(int(connIndex))
+	edgeAddr := pool.next(nil)
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -361,7 +365,6 @@ func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) error
 		default:
 		}
 
-		edgeAddr := pool.addrs[edgeIndex]
 		tunnelID := s.currentCredentials().TunnelID
 		err := s.safeServeConnection(connIndex, edgeAddr)
 		if err == nil || s.ctx.Err() != nil {
@@ -386,7 +389,7 @@ func (s *Service) superviseConnection(connIndex uint8, pool *edgeAddrPool) error
 		}
 
 		retries, switchedProtocol, switched := s.recordConnectionFailure(connIndex, err)
-		edgeIndex = pool.move(edgeIndex)
+		edgeAddr = pool.next(edgeAddr)
 		backoff := backoffDuration(int(retries))
 		retryableErr, isRetryable := E.Cast[*protocol.RetryableError](err)
 		if isRetryable && retryableErr.Delay > 0 {
@@ -606,43 +609,43 @@ func backoffDuration(retries int) time.Duration {
 }
 
 type edgeAddrPool struct {
-	access sync.Mutex
-	addrs  []*discovery.EdgeAddr
-	used   []bool
+	access  sync.Mutex
+	regions [][]*discovery.EdgeAddr
+	used    map[*discovery.EdgeAddr]bool
 }
 
-func (p *edgeAddrPool) take(from int) int {
+func (p *edgeAddrPool) next(previous *discovery.EdgeAddr) *discovery.EdgeAddr {
 	p.access.Lock()
 	defer p.access.Unlock()
-	index := from % len(p.addrs)
-	for p.used[index] {
-		index = (index + 1) % len(p.addrs)
-	}
-	p.used[index] = true
-	return index
-}
-
-func (p *edgeAddrPool) move(current int) int {
-	p.access.Lock()
-	p.used[current] = false
-	p.access.Unlock()
-	return p.take(current + 1)
-}
-
-func flattenRegions(regions [][]*discovery.EdgeAddr) []*discovery.EdgeAddr {
-	var result []*discovery.EdgeAddr
-	for index := 0; ; index++ {
-		var appended bool
-		for _, region := range regions {
-			if index < len(region) {
-				result = append(result, region[index])
-				appended = true
+	delete(p.used, previous)
+	var (
+		selected       *discovery.EdgeAddr
+		selectedUsed   int
+		selectedFailed bool
+	)
+	for _, region := range p.regions {
+		previousIndex := slices.Index(region, previous)
+		var (
+			candidate *discovery.EdgeAddr
+			used      int
+		)
+		for offset := range region {
+			edgeAddr := region[(previousIndex+1+offset)%len(region)]
+			if p.used[edgeAddr] {
+				used++
+			} else if candidate == nil && edgeAddr != previous {
+				candidate = edgeAddr
 			}
 		}
-		if !appended {
-			return result
+		if candidate != nil && (selected == nil || used < selectedUsed || used == selectedUsed && selectedFailed) {
+			selected, selectedUsed, selectedFailed = candidate, used, previousIndex >= 0
 		}
 	}
+	if selected == nil {
+		selected = previous
+	}
+	p.used[selected] = true
+	return selected
 }
 
 func effectiveHAConnections(requested, available int) int {

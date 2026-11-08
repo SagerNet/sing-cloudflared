@@ -199,7 +199,7 @@ func TestSuperviseConnectionStopsOnPermanentRegistrationError(t *testing.T) {
 	serviceInstance.done.Add(1)
 	done := make(chan struct{})
 	go func() {
-		serviceInstance.superviseConnection(0, &edgeAddrPool{addrs: []*EdgeAddr{{}}, used: make([]bool, 1)})
+		serviceInstance.superviseConnection(0, &edgeAddrPool{regions: [][]*EdgeAddr{{{}}}, used: make(map[*EdgeAddr]bool)})
 		close(done)
 	}()
 
@@ -238,7 +238,7 @@ func TestSuperviseConnectionCancelsServiceOnNonRemoteManagedError(t *testing.T) 
 	serviceInstance.done.Add(1)
 	done := make(chan struct{})
 	go func() {
-		serviceInstance.superviseConnection(0, &edgeAddrPool{addrs: []*EdgeAddr{{}}, used: make([]bool, 1)})
+		serviceInstance.superviseConnection(0, &edgeAddrPool{regions: [][]*EdgeAddr{{{}}}, used: make(map[*EdgeAddr]bool)})
 		close(done)
 	}()
 
@@ -287,7 +287,7 @@ func TestSuperviseConnectionUsesRetryableDelayAndRotatesEdges(t *testing.T) {
 	done := make(chan struct{})
 	started := time.Now()
 	go func() {
-		serviceInstance.superviseConnection(0, &edgeAddrPool{addrs: []*EdgeAddr{edge1, edge2}, used: make([]bool, 2)})
+		serviceInstance.superviseConnection(0, &edgeAddrPool{regions: [][]*EdgeAddr{{edge1, edge2}}, used: make(map[*EdgeAddr]bool)})
 		close(done)
 	}()
 

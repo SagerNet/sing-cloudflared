@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -141,14 +140,6 @@ func TestServiceHelpers(t *testing.T) {
 
 	if got := effectiveHAConnections(4, 2); got != 2 {
 		t.Fatalf("unexpected effective HA %d", got)
-	}
-
-	regions := [][]*EdgeAddr{
-		{{UDP: net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:1"))}},
-		{{UDP: net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:2"))}},
-	}
-	if flattened := flattenRegions(regions); len(flattened) != 2 {
-		t.Fatalf("unexpected flattened regions %#v", flattened)
 	}
 
 	backoff := backoffDuration(20)
