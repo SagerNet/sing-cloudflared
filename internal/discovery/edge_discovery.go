@@ -15,6 +15,7 @@ import (
 type Resolver interface {
 	LookupSRV(ctx context.Context, service, proto, name string) ([]*net.SRV, error)
 	LookupNetIP(ctx context.Context, host string) ([]netip.Addr, error)
+	LookupTXT(ctx context.Context, name string) ([]string, error)
 }
 
 const (

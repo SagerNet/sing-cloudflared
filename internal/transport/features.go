@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"hash/fnv"
-	"net"
 	"sync"
 	"time"
 
@@ -22,15 +21,8 @@ type cloudflaredFeaturesRecord struct {
 	DatagramV3Percentage uint32 `json:"dv3_2"`
 }
 
-var LookupCloudflaredFeatures = func(ctx context.Context) ([]byte, error) {
-	lookupCtx, cancel := context.WithTimeout(ctx, featureLookupTimeout)
-	defer cancel()
-
-	records, err := net.DefaultResolver.LookupTXT(lookupCtx, featureSelectorHostname)
-	if err != nil || len(records) == 0 {
-		return nil, err
-	}
-	return []byte(records[0]), nil
+type TXTResolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
 }
 
 type FeatureSelector struct {
@@ -43,11 +35,19 @@ type FeatureSelector struct {
 	access sync.RWMutex
 }
 
-func NewFeatureSelector(accountTag string, configured string) *FeatureSelector {
+func NewFeatureSelector(accountTag string, configured string, resolver TXTResolver) *FeatureSelector {
 	selector := &FeatureSelector{
-		configured:             configured,
-		accountTag:             accountTag,
-		lookup:                 LookupCloudflaredFeatures,
+		configured: configured,
+		accountTag: accountTag,
+		lookup: func(ctx context.Context) ([]byte, error) {
+			lookupCtx, cancel := context.WithTimeout(ctx, featureLookupTimeout)
+			defer cancel()
+			records, err := resolver.LookupTXT(lookupCtx, featureSelectorHostname)
+			if err != nil || len(records) == 0 {
+				return nil, err
+			}
+			return []byte(records[0]), nil
+		},
 		refreshInterval:        defaultFeatureRefreshInterval,
 		currentDatagramVersion: protocol.DefaultDatagramVersion,
 	}

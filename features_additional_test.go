@@ -32,7 +32,7 @@ func TestAccountEnabledThresholdBoundary(t *testing.T) {
 func TestFeatureSelectorSnapshotReturnsIndependentFeatureSlice(t *testing.T) {
 	t.Parallel()
 
-	selector := newFeatureSelector("account", defaultDatagramVersion)
+	selector := newFeatureSelector("account", defaultDatagramVersion, nil)
 	_, first := selector.Snapshot()
 	first[0] = "mutated"
 

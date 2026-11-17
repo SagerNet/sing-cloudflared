@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"slices"
@@ -183,6 +184,10 @@ func NewService(options ServiceOptions) (*Service, error) {
 	if tunnelDialer == nil {
 		tunnelDialer = N.SystemDialer
 	}
+	var featureResolver transport.TXTResolver = net.DefaultResolver
+	if options.ControlResolver != nil {
+		featureResolver = options.ControlResolver
+	}
 
 	region := options.Region
 	if region != "" && credentials.Endpoint != "" {
@@ -217,7 +222,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		region:            region,
 		edgeIPVersion:     edgeIPVersion,
 		datagramVersion:   datagramVersion,
-		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, datagramVersion),
+		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, datagramVersion, featureResolver),
 		gracePeriod:       gracePeriod,
 		configManager:     configManager,
 		flowLimiter:       &datagram.FlowLimiter{},

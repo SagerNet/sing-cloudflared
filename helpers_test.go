@@ -3,6 +3,7 @@ package cloudflared
 import (
 	"context"
 	"encoding/base64"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func newTestService(t *testing.T, token string, testProtocol string, haConnectio
 		protocol:          testProtocol,
 		edgeIPVersion:     0,
 		datagramVersion:   "",
-		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, ""),
+		featureSelector:   transport.NewFeatureSelector(credentials.AccountTag, "", net.DefaultResolver),
 		gracePeriod:       5 * time.Second,
 		configManager:     configManager,
 		flowLimiter:       &datagram.FlowLimiter{},
